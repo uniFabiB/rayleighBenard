@@ -10,6 +10,7 @@ from firedrake import *
 
 import time
 import sys
+import argparse
 import traceback
 
 ### code source code file ###
@@ -23,10 +24,24 @@ from ufl.differentiation import NablaGrad
 
 
 def err(type, value, tb):
+	global infoString
 	print("\n")
-	print(datetime.datetime.now(),"Exception after",datetime.datetime.now()-time_start)
+	errorTime = datetime.datetime.now()
+	completeDuration = errorTime - time_start
+	print(errorTime,"Exception after",completeDuration)
+	print("\n")
+	
+	infoString += "\n\nERROR INFO"
+	infoString += "\nscript stopped because of an error"
+	putInfoInInfoString("errorTime", errorTime)
+	putInfoInInfoString("completeDuration", completeDuration)
+	
+	putInfoInInfoString("error type", type)
+	putInfoInInfoString("error value", value)
+	putInfoInInfoString("error traceback", traceback.format_exception(type, value, tb))
+	
+	writeInfoFile()
 	sys.__excepthook__(type, value, tb)
-	print("\n")
 
 sys.excepthook = err
 
@@ -36,29 +51,42 @@ simulationId = str(time_start) +str("_-_") +str(int(np.round(10000000000*np.rand
 simulationId = simulationId.replace(":","-")
 simulationId = simulationId.replace(" ","_")
 infoString = "simulation info"
-infoString += "\n\t"+"simulationId"+" = \t\t"+str(simulationId)
-infoString += "\n\t"+"time_start"+" = \t\t"+str(time_start)
+
+def putInfoInInfoString(identifier, value):
+	global infoString
+	infoString += "\n\t"+identifier+" = \t\t"+str(value)
 
 
+recoveryScriptFile = "used_script_simulation_"+simulationId+".py"
+
+putInfoInInfoString("simulationId", simulationId)
+putInfoInInfoString("recoveryScriptFile",recoveryScriptFile)
+putInfoInInfoString("time_start", time_start)
 
 
 
 ### PARAMETERS ###
-n = 200
+n = 100
 tau = 0.000005
 
-Lx = 1
-Ly = 1
-tEnd = 0.01
-alpha = Constant(0)			# alpha = 1/L_s in navier slip
-nu = Constant(1.0)			# ... - nu * Laplace u ...
-kappa = Constant(1.0)			# ... - kappa * Laplace theta ...
-Ra = Constant(10**8)			# ... + Ra * theta * e_2
-Pr = Constant(1.0)			# 1/Pr*(u_t+u cdot nabla u) + ...
+Lx = 1.0
+Ly = 1.0
+tEnd = 0.003
+alpha = 0.0			# alpha = 1/L_s in navier slip
+nu = 1.0			# ... - nu * Laplace u ...
+kappa = 1.0			# ... - kappa * Laplace theta ...
+Ra = 10**8			# ... + Ra * theta * e_2
+Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
-problem = "rayleighBenard"		# either 
+problem = ""		# either 
 					#	boussinesq (no boundary for theta only ic) 
 					#	rayleighBenard (boundary -1, 1, ic = 0 + match boundary)
+					# 	or change by script argument
+
+timeDiscretisation = "crankNicolson"		# either
+						# 	crankNicolson
+						# or
+						#	backwardEuler
 
 ### PARAMETERS END ###
 
@@ -71,13 +99,64 @@ writeOutputEvery = 0.000025
 
 outputFolder = "output/"
 dataFolder = outputFolder + "data/"
-
+infoFilePath = outputFolder + "infoFile.txt"
 
 
 nx = round(n*Lx/Ly)
 ny = n
 
+# managing script arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--alpha", "-a", type=float, help="set alpha=1/L_s")
+problemArgumentGroup = parser.add_mutually_exclusive_group()
+problemArgumentGroup.add_argument("--rayleighBenard", "-rb", action='store_true', help="simulate Rayleigh-Bénard problem (temperature fixed boundary condition, (almost) no initial condition)")
+problemArgumentGroup.add_argument("--boussinesq", "-bou", action='store_true', help="simulate Boussinesq problem (arbitrary temperature at boundary, initial condition prescribed)")
+args = parser.parse_args()
+if args.alpha:
+	alpha = float(args.alpha)
+	print("alpha set by script argument to", alpha)
+if args.rayleighBenard:
+	problem = "rayleighBenard"
+	print("problem set by script argument to", problem)
+elif args.boussinesq:
+	problem = "boussinesq"
+	print("problem set by script argument to", problem)
+	
 ### OPTIONS END ###
+
+putInfoInInfoString("nx", nx)
+putInfoInInfoString("ny", ny)
+putInfoInInfoString("Lx", Lx)
+putInfoInInfoString("Ly", Ly)
+putInfoInInfoString("tau", tau)
+putInfoInInfoString("tEnd", tEnd)
+if args.alpha:
+	putInfoInInfoString("alpha (changed by script argument)", alpha)
+else:
+	putInfoInInfoString("alpha", alpha)
+putInfoInInfoString("nu", nu)
+putInfoInInfoString("kappa", kappa)
+putInfoInInfoString("Ra", Ra)
+putInfoInInfoString("Pr", Pr)
+if args.rayleighBenard or args.boussinesq:
+	putInfoInInfoString("problem (changed by script argument)", problem)
+else:
+	putInfoInInfoString("problem", problem)
+putInfoInInfoString("timeDiscretisation", timeDiscretisation)
+
+# delete content of infofile
+infoFile = open(infoFilePath,"w")
+infoFile.write("")
+infoFile.close()
+
+def writeInfoFile():
+	global infoString
+	infoFile = open(infoFilePath,"a")
+	infoFile.write(infoString)
+	infoFile.close()
+	infoString = ""
+writeInfoFile()
+
 
 mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 
@@ -103,16 +182,28 @@ thetaOld = Function(V_t)
 
 
 
-boundary_ids = (1,2)
+#boundary_ids = (1,2)
+boundary_top = 2
+boundary_bot = 1
+boundary_ids = (boundary_top, boundary_bot)
 
 
 
-F_backward = (
+alpha = Constant(float(alpha))
+nu = Constant(float(nu))
+kappa = Constant(float(kappa))
+Ra = Constant(float(Ra))
+Pr = Constant(float(Pr))
+
+
+
+
+F_backwardEuler = (
 	(
 		1.0/Pr * inner(u-uOld,v)
 		+ tau*(
 			 1.0/Pr *inner(dot(u, nabla_grad(u)), v)
-			- p*div(v)
+			+ inner(grad(p),v)
 			+ nu * inner(grad(u), grad(v))
 			- Ra * theta*v[1]
 		)
@@ -126,19 +217,16 @@ F_backward = (
 		
 	)*dx
 	+
-	tau * alpha *
-	( 
-		nu * inner(u[0],v[0])
-	)*ds(boundary_ids)
+	tau * nu * (inner(grad(u)[1,1], v[1])*ds(boundary_bot)
+			-inner(grad(u)[1,1], v[1])*ds(boundary_top))
 )
 
-
-F_cranknichel = (
+F_crankNicolson = (
 	(
 		1.0/Pr * inner(u-uOld,v)
 		+ tau*(
 			 1.0/Pr * 1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))
-			- p*div(v)
+			+ inner(grad(p),v)
 			+ nu * 1.0/2.0*(inner(grad(u), grad(v))+inner(grad(uOld), grad(v)))
 			- Ra * 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))
 		)
@@ -151,14 +239,19 @@ F_cranknichel = (
 		)
 	)*dx
 	+
-	tau * alpha * 
-	( 
-		nu * 1.0/2.0*inner(u[0]+uOld[0],v[0])
-	)*ds(boundary_ids)
+	tau * nu * 1.0/2.0*(inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_bot)
+				-inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_top))
 )
 
+if alpha != 0.0:
+	F_backwardEuler = F_backwardEuler + tau * alpha * nu * inner(u[0],v[0])*ds(boundary_ids)
+	F_crankNicolson = F_crankNicolson + tau * alpha * nu * 1.0/2.0*inner(u[0]+uOld[0],v[0])*ds(boundary_ids)
 
-F=F_cranknichel
+
+if timeDiscretisation == "crankNicolson":
+	F=F_crankNicolson
+if timeDiscretisation == "backwardEuler":
+	F=F_backwardEuler
 
 nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True),Z.sub(2)])
 
@@ -198,6 +291,8 @@ elif problem == "rayleighBenard":
 		sumOfSin = sumOfSin + sinAmpList[k]*sin((lowestMode+k)*pi*x/Lx)
 	theta = project(-(1+sumOfCos)*exp(-pow(decayRatio*(y-Ly),2))+(1+sumOfSin)*exp(-pow(decayRatio*y,2)), V_t)
 #	theta = project(Constant(0), V_t)
+else:
+	sys.exit("problem not specified (neither rayleighBenard nor boussinesq)")
 	
 
 
@@ -208,8 +303,8 @@ bc_nonPenetration = DirichletBC(Z.sub(0).sub(1), Constant(0.0), boundary_ids)
 bcs = [bc_nonPenetration]
 
 if problem == "rayleighBenard":
-	bc_thetaRB_top = DirichletBC(Z.sub(2), -1.0, [2])
-	bc_thetaRB_bot = DirichletBC(Z.sub(2), 1.0, [1])
+	bc_thetaRB_top = DirichletBC(Z.sub(2), -1.0, boundary_top)
+	bc_thetaRB_bot = DirichletBC(Z.sub(2), 1.0, boundary_bot)
 	bcs.append(bc_thetaRB_top)
 	bcs.append(bc_thetaRB_bot)
 
@@ -226,18 +321,10 @@ problem = NonlinearVariationalProblem(F, upt, bcs=bcs)
 solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
 
-scriptCopyPath = outputFolder + "used_script_simulation_"+simulationId+".py"
-copy(os.path.realpath(__file__), scriptCopyPath)
+recoveryScriptPath = outputFolder + recoveryScriptFile
+copy(os.path.realpath(__file__), recoveryScriptPath)
 
 
-def projectAvgFree(f):
-	#timestarpro = datetime.datetime.now()
-	avgF = 1/(Lx*Ly)*assemble(f*dx)
-	g = f-avgF
-	#print("projecting to average free took ",datetime.datetime.now()-timestarpro)
-	#print("zero avg p has measure ",assemble(g*dx))
-	return g
-	
 outFile = File(dataFolder+"test.pvd")
 lastWrittenOutput = -1
 t = 0
@@ -254,7 +341,13 @@ V_pOut = V_p
 V_tOut = V_t
 
 
-
+def projectAvgFree(f, fOutput):
+	#timestarprojection = datetime.datetime.now()
+	avgF = 1/(Lx*Ly)*assemble(f*dx)
+	fOutput.assign(f-avgF)
+	#print("projecting to average free took ",datetime.datetime.now()-timestarprojection)
+	return fOutput
+	
 
 def writeMeshFunctions():
 	global lastWrittenOutput
@@ -263,16 +356,21 @@ def writeMeshFunctions():
 	theta.rename("theta")
 	pOutput = p
 	if projectPoutputToAverageFree:
-		pOutput = projectAvgFree(p)
-	outFile.write(u, p, theta, time=t)
+		pOutput = projectAvgFree(p, pOutput)
+	outFile.write(u, pOutput, theta, time=t)
 	lastWrittenOutput = t
 
 
 # doesnt matter but otherwise renaming doesnt work
 p = Function(V_p)
 writeMeshFunctions()
+
+infoString += "\n\nsolving info"
+
 tWorld = datetime.datetime.now()
 print(tWorld, "starting to solve")
+putInfoInInfoString("solving start", tWorld)
+
 while(t<tEnd):
 	
 	solver.solve()
@@ -289,5 +387,11 @@ while(t<tEnd):
 	
 	print(round(t/tEnd*100,12),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,12))
 	tWorld = datetime.datetime.now()
-	
-print("completely done at", datetime.datetime.now()," after ",(datetime.datetime.now()-time_start))
+
+finishTime = datetime.datetime.now()
+completeDuration = finishTime - time_start
+putInfoInInfoString("finishTime", finishTime)
+putInfoInInfoString("completeDuration", completeDuration)
+writeInfoFile()
+
+print("completely done at", finishTime," after ",completeDuration)
