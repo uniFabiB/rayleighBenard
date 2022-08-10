@@ -34,6 +34,7 @@ def err(type, value, tb):
 	infoString += "\n\nERROR INFO"
 	infoString += "\nscript stopped because of an error"
 	putInfoInInfoString("errorTime", errorTime)
+	putInfoInInfoString("errorSimulationTime",t)
 	putInfoInInfoString("completeDuration", completeDuration)
 	
 	putInfoInInfoString("error type", type)
@@ -67,15 +68,15 @@ putInfoInInfoString("time_start", time_start)
 
 ### PARAMETERS ###
 n = 100
-tau = 0.000005
+tau = 0.0001
 
-Lx = 1.0
+Lx = 2.0
 Ly = 1.0
-tEnd = 0.003
+tEnd = 0.1
 alpha = 0.0			# alpha = 1/L_s in navier slip
 nu = 1.0			# ... - nu * Laplace u ...
-kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10**8			# ... + Ra * theta * e_2
+kappa = 0.0			# ... - kappa * Laplace theta ...
+Ra = 10**4			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 problem = ""		# either 
@@ -83,7 +84,7 @@ problem = ""		# either
 					#	rayleighBenard (boundary -1, 1, ic = 0 + match boundary)
 					# 	or change by script argument
 
-timeDiscretisation = "crankNicolson"		# either
+timeDiscretisation = ""		# either
 						# 	crankNicolson
 						# or
 						#	backwardEuler
@@ -95,7 +96,7 @@ timeDiscretisation = "crankNicolson"		# either
 
 projectPoutputToAverageFree = True 			# force the output function of p to be average free (doesn't change the calculation)
 
-writeOutputEvery = 0.000025
+writeOutputEvery = 0.001
 
 outputFolder = "output/"
 dataFolder = outputFolder + "data/"
@@ -142,7 +143,6 @@ if args.rayleighBenard or args.boussinesq:
 	putInfoInInfoString("problem (changed by script argument)", problem)
 else:
 	putInfoInInfoString("problem", problem)
-putInfoInInfoString("timeDiscretisation", timeDiscretisation)
 
 # delete content of infofile
 infoFile = open(infoFilePath,"w")
@@ -216,9 +216,9 @@ F_backwardEuler = (
 		)
 		
 	)*dx
-	+
-	tau * nu * (inner(grad(u)[1,1], v[1])*ds(boundary_bot)
-			-inner(grad(u)[1,1], v[1])*ds(boundary_top))
+#	+
+#	tau * nu * (inner(grad(u)[1,1], v[1])*ds(boundary_bot)
+#			-inner(grad(u)[1,1], v[1])*ds(boundary_top))
 )
 
 F_crankNicolson = (
@@ -238,20 +238,26 @@ F_crankNicolson = (
 #			- 1.0/2.0*(inner(u*theta, grad(s))+inner(uOld*thetaOld, grad(s)))
 		)
 	)*dx
-	+
-	tau * nu * 1.0/2.0*(inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_bot)
-				-inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_top))
+#	+
+#	tau * nu * 1.0/2.0*(inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_bot)
+#				-inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_top))
 )
 
 if alpha != 0.0:
 	F_backwardEuler = F_backwardEuler + tau * alpha * nu * inner(u[0],v[0])*ds(boundary_ids)
 	F_crankNicolson = F_crankNicolson + tau * alpha * nu * 1.0/2.0*inner(u[0]+uOld[0],v[0])*ds(boundary_ids)
 
-
-if timeDiscretisation == "crankNicolson":
-	F=F_crankNicolson
-if timeDiscretisation == "backwardEuler":
-	F=F_backwardEuler
+#time discretisation scheme
+if problem == "boussinesq":
+	timeDiscretisation = "backwardEuler"
+	F=F_backwardEuler	# backward euler reduces the errors in comparison to crank nicolson if there is no diffusion
+elif problem == "rayleighBenard":
+	timeDiscretisation = "crankNicolson"
+	F=F_crankNicolson	# backward euler not tested but crank nic should be unconditionally stable
+else:
+	sys.exit("problem not specified (neither rayleighBenard nor boussinesq)")
+putInfoInInfoString("timeDiscretisation", timeDiscretisation)
+writeInfoFile()
 
 nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True),Z.sub(2)])
 
@@ -265,17 +271,37 @@ u = project(as_vector([Constant(0), Constant(0)]), V_u)
 
 
 # initial conditions for theta
+
 if problem == "boussinesq":
 #	theta = project(sin(2*pi*(x/Lx+0.1))*exp(-5*pow(y-middleY,2)), V_t)
 #	freq = 1
 #	theta = project((sin(freq*2*pi*(x/Lx+y/Ly))*sin(freq*2*pi*(y/Ly))), V_t)
-	theta = project(sin(2*pi*(x/Lx+0.1))*exp(-(5*(y-middleY)*(y-middleY))), V_t)
+#	theta = project(sin(2*pi*(x/Lx+0.1))*exp(-(5*(y-middleY)*(y-middleY))), V_t)
+	
+	
+	slope = 20.0
+	slopeX = slope/Lx
+	slopeY = slope/Ly
+	leftPlus = Max(Min(slope*(x-1.0/8.0*Lx),1.0),0.0)
+	rightPlus = Max(Min(slope*(-(x-3.0/8.0*Lx)),1.0),0.0)
+	botPlus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
+	topPlus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
+	lrPlus = Min(leftPlus,rightPlus)
+	tbPlus = Min(botPlus,topPlus)
+	Plus = lrPlus*tbPlus
+	
+	leftMinus = Max(Min(slope*(x-5.0/8.0*Lx),1.0),0.0)
+	rightMinus = Max(Min(slope*(-(x-7.0/8.0*Lx)),1.0),0.0)
+	botMinus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
+	topMinus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
+	lrMinus = Min(leftMinus,rightMinus)
+	tbMinus = Min(botMinus,topMinus)
+	Minus = lrMinus*tbMinus
+	
+	theta = project(Plus-Minus, V_t)
 elif problem == "rayleighBenard":
 	sinAmp = 0.025
 	
-	fractionN0 = 1.0/25.0		# after what fraction of height should theta be 10^(-3)
-	decayRatioN0 = round(ny*fractionN0) # after n0 gridpoints should be close to 0 -> 10^{-3}		exp(-(2,5^2)) ~ 10^(-3)
-	decayRatio = 2.5*ny/(decayRatioN0*Ly)	# decay at the boundary (40 works pretty good for ny = 50)
 	frequenceModes = 3
 	lowestMode = 2
 	#sinAmpList = [0.001,-0.001,0.003,-0.007,0.001,0.006,-0.009,0.001,0.002,0.007]
@@ -289,6 +315,10 @@ elif problem == "rayleighBenard":
 	for k in range(frequenceModes):
 		sumOfCos = sumOfCos + cosAmpList[k]*cos((lowestMode+k)*pi*x/Lx)
 		sumOfSin = sumOfSin + sinAmpList[k]*sin((lowestMode+k)*pi*x/Lx)
+		
+	fractionN0 = 1.0/25.0		# after what fraction of height should theta be 10^(-3)
+	decayRatioN0 = round(ny*fractionN0) # after n0 gridpoints should be close to 0 -> 10^{-3}		exp(-(2,5^2)) ~ 10^(-3)
+	decayRatio = 2.5*ny/(decayRatioN0*Ly)	# decay at the boundary (40 works pretty good for ny = 50)
 	theta = project(-(1+sumOfCos)*exp(-pow(decayRatio*(y-Ly),2))+(1+sumOfSin)*exp(-pow(decayRatio*y,2)), V_t)
 #	theta = project(Constant(0), V_t)
 else:
