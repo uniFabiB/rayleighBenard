@@ -67,16 +67,21 @@ putInfoInInfoString("time_start", time_start)
 
 
 ### PARAMETERS ###
-n = 100
+n = 20
 tau = 0.0001
 
-Lx = 2.0
+problem = ""
+######## TODO set kappa for boussinesq by script ########
+Lx = 1.0
 Ly = 1.0
-tEnd = 0.1
+
+t = 0.0
+tEnd = 1.0
+
 alpha = 0.0			# alpha = 1/L_s in navier slip
 nu = 1.0			# ... - nu * Laplace u ...
-kappa = 0.0			# ... - kappa * Laplace theta ...
-Ra = 10**4			# ... + Ra * theta * e_2
+kappa = 1.0			# ... - kappa * Laplace theta ...
+Ra = 10.0**6			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 problem = ""		# either 
@@ -96,7 +101,7 @@ timeDiscretisation = ""		# either
 
 projectPoutputToAverageFree = True 			# force the output function of p to be average free (doesn't change the calculation)
 
-writeOutputEvery = 0.001
+writeOutputEvery = 0.0#0.000025
 
 outputFolder = "output/"
 dataFolder = outputFolder + "data/"
@@ -158,9 +163,14 @@ def writeInfoFile():
 writeInfoFile()
 
 
-mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
+#mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 
+#mesh = Mesh('mygeo.msh', periodic_coords=(0,1))
+mesh = Mesh('mygeo.msh')
 
+boundary_id_bot = 1
+boundary_id_top = 2
+boundary_ids = (boundary_id_bot, boundary_id_top)
 
 
 V_u = VectorFunctionSpace(mesh, "CG", 2)
@@ -182,10 +192,6 @@ thetaOld = Function(V_t)
 
 
 
-#boundary_ids = (1,2)
-boundary_top = 2
-boundary_bot = 1
-boundary_ids = (boundary_top, boundary_bot)
 
 
 
@@ -198,28 +204,18 @@ Pr = Constant(float(Pr))
 
 
 
-F_backwardEuler = (
-	(
-		1.0/Pr * inner(u-uOld,v)
-		+ tau*(
-			 1.0/Pr *inner(dot(u, nabla_grad(u)), v)
-			+ inner(grad(p),v)
-			+ nu * inner(grad(u), grad(v))
-			- Ra * theta*v[1]
-		)
-		+ div(u) * q
-		+ (theta-thetaOld) * s
-		+ tau*( 
-			kappa * inner(grad(theta), grad(s))
-#			+ inner(dot(u, grad(theta)), s)
-			- inner(u*theta, grad(s))
-		)
-		
-	)*dx
-#	+
-#	tau * nu * (inner(grad(u)[1,1], v[1])*ds(boundary_bot)
-#			-inner(grad(u)[1,1], v[1])*ds(boundary_top))
-)
+
+
+
+
+
+e1 = Constant([1.0,0.0])
+e2 = Constant([0.0,1.0])
+
+
+
+normal = FacetNormal(mesh)
+tangential = as_vector((-normal[1],normal[0]))
 
 F_crankNicolson = (
 	(
@@ -230,7 +226,8 @@ F_crankNicolson = (
 			+ nu * 1.0/2.0*(inner(grad(u), grad(v))+inner(grad(uOld), grad(v)))
 			- Ra * 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))
 		)
-		+ inner(div(u),q)
+		- inner(u,grad(q))	# L_# perp L_{sigma,tau} deswegen implied automatisch dass #u*n = 0
+#		+ inner(div(u),q)
 		+ inner(theta-thetaOld,s)
 		+ tau*( 
 			kappa * 1.0/2.0*(inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))
@@ -238,28 +235,22 @@ F_crankNicolson = (
 #			- 1.0/2.0*(inner(u*theta, grad(s))+inner(uOld*thetaOld, grad(s)))
 		)
 	)*dx
-#	+
-#	tau * nu * 1.0/2.0*(inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_bot)
-#				-inner(grad(u)[1,1]+grad(uOld)[1,1], v[1])*ds(boundary_top))
+#	-
+#	- tau * nu * 1.0/2.0*(inner(dot(normal,dot(normal, nabla_grad(u))), dot(v,normal))+inner(dot(normal,dot(normal, nabla_grad(uOld))), dot(v,normal)))*ds(boundary_ids)
+
 )
 
 if alpha != 0.0:
-	F_backwardEuler = F_backwardEuler + tau * alpha * nu * inner(u[0],v[0])*ds(boundary_ids)
-	F_crankNicolson = F_crankNicolson + tau * alpha * nu * 1.0/2.0*inner(u[0]+uOld[0],v[0])*ds(boundary_ids)
+#	F_backwardEuler = F_backwardEuler + tau * alpha * nu * inner(u,v)*ds("on_boundary")
+#	F_crankNicolson = F_crankNicolson + tau * alpha * nu * 1.0/2.0*inner(u+uOld,v)*ds(boundary_ids)
+	F_crankNicolson = F_crankNicolson + tau * alpha * nu * 1.0/2.0*inner(dot(u+uOld,tangential),dot(v,tangential))*ds(boundary_ids)
 
-#time discretisation scheme
-if problem == "boussinesq":
-	timeDiscretisation = "backwardEuler"
-	F=F_backwardEuler	# backward euler reduces the errors in comparison to crank nicolson if there is no diffusion
-elif problem == "rayleighBenard":
-	timeDiscretisation = "crankNicolson"
-	F=F_crankNicolson	# backward euler not tested but crank nic should be unconditionally stable
-else:
-	sys.exit("problem not specified (neither rayleighBenard nor boussinesq)")
+
+F = F_crankNicolson
 putInfoInInfoString("timeDiscretisation", timeDiscretisation)
 writeInfoFile()
 
-nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True),Z.sub(2)])
+nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True), Z.sub(2)])
 
 x,y = SpatialCoordinate(mesh)
 scale = 0.1
@@ -267,80 +258,97 @@ middleX = Lx*0.5
 middleY = Ly*0.5
 
 # initial conditions for u
-u = project(as_vector([Constant(0), Constant(0)]), V_u)
+u = project(Constant([0.0,0.0]), V_u)
 
 
 # initial conditions for theta
+slope = 10.0
+slopeX = slope/Lx
+slopeY = slope/Ly
+leftPlus = Max(Min(slope*(x-1.0/8.0*Lx),1.0),0.0)
+rightPlus = Max(Min(slope*(-(x-3.0/8.0*Lx)),1.0),0.0)
+botPlus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
+topPlus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
+lrPlus = Min(leftPlus,rightPlus)
+tbPlus = Min(botPlus,topPlus)
+Plus = lrPlus*tbPlus
 
-if problem == "boussinesq":
-#	theta = project(sin(2*pi*(x/Lx+0.1))*exp(-5*pow(y-middleY,2)), V_t)
-#	freq = 1
-#	theta = project((sin(freq*2*pi*(x/Lx+y/Ly))*sin(freq*2*pi*(y/Ly))), V_t)
-#	theta = project(sin(2*pi*(x/Lx+0.1))*exp(-(5*(y-middleY)*(y-middleY))), V_t)
-	
-	
-	slope = 20.0
-	slopeX = slope/Lx
-	slopeY = slope/Ly
-	leftPlus = Max(Min(slope*(x-1.0/8.0*Lx),1.0),0.0)
-	rightPlus = Max(Min(slope*(-(x-3.0/8.0*Lx)),1.0),0.0)
-	botPlus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
-	topPlus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
-	lrPlus = Min(leftPlus,rightPlus)
-	tbPlus = Min(botPlus,topPlus)
-	Plus = lrPlus*tbPlus
-	
-	leftMinus = Max(Min(slope*(x-5.0/8.0*Lx),1.0),0.0)
-	rightMinus = Max(Min(slope*(-(x-7.0/8.0*Lx)),1.0),0.0)
-	botMinus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
-	topMinus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
-	lrMinus = Min(leftMinus,rightMinus)
-	tbMinus = Min(botMinus,topMinus)
-	Minus = lrMinus*tbMinus
-	
-	theta = project(Plus-Minus, V_t)
-elif problem == "rayleighBenard":
-	sinAmp = 0.025
-	
-	frequenceModes = 3
-	lowestMode = 2
-	#sinAmpList = [0.001,-0.001,0.003,-0.007,0.001,0.006,-0.009,0.001,0.002,0.007]
-	#cosAmpList = [0.001,0.001,-0.003,0.007,0.001,-0.006,0.009,0.001,0.002,-0.007]
-	sinAmpList = sinAmp*np.ones(frequenceModes)
-	cosAmpList = sinAmp*np.ones(frequenceModes)
-#	sinAmpList = sinAmp*np.zeros(frequenceModes)
-#	cosAmpList = sinAmp*np.zeros(frequenceModes)
-	sumOfCos = 0
-	sumOfSin = 0
-	for k in range(frequenceModes):
-		sumOfCos = sumOfCos + cosAmpList[k]*cos((lowestMode+k)*pi*x/Lx)
-		sumOfSin = sumOfSin + sinAmpList[k]*sin((lowestMode+k)*pi*x/Lx)
-		
-	fractionN0 = 1.0/25.0		# after what fraction of height should theta be 10^(-3)
-	decayRatioN0 = round(ny*fractionN0) # after n0 gridpoints should be close to 0 -> 10^{-3}		exp(-(2,5^2)) ~ 10^(-3)
-	decayRatio = 2.5*ny/(decayRatioN0*Ly)	# decay at the boundary (40 works pretty good for ny = 50)
-	theta = project(-(1+sumOfCos)*exp(-pow(decayRatio*(y-Ly),2))+(1+sumOfSin)*exp(-pow(decayRatio*y,2)), V_t)
-#	theta = project(Constant(0), V_t)
-else:
-	sys.exit("problem not specified (neither rayleighBenard nor boussinesq)")
-	
+leftMinus = Max(Min(slope*(x-5.0/8.0*Lx),1.0),0.0)
+rightMinus = Max(Min(slope*(-(x-7.0/8.0*Lx)),1.0),0.0)
+botMinus = Max(Min(slope*(y-1.0/4.0*Ly),1.0),0.0)
+topMinus = Max(Min(slope*(-(y-3.0/4.0*Ly)),1.0),0.0)
+lrMinus = Min(leftMinus,rightMinus)
+tbMinus = Min(botMinus,topMinus)
+Minus = lrMinus*tbMinus
+
+#theta = project(Plus-Minus, V_t)
+theta = project(Constant(0), V_t)
+
 
 
 uOld.assign(u)
 thetaOld.assign(theta)
 
-bc_nonPenetration = DirichletBC(Z.sub(0).sub(1), Constant(0.0), boundary_ids)
-bcs = [bc_nonPenetration]
 
-if problem == "rayleighBenard":
-	bc_thetaRB_top = DirichletBC(Z.sub(2), -1.0, boundary_top)
-	bc_thetaRB_bot = DirichletBC(Z.sub(2), 1.0, boundary_bot)
-	bcs.append(bc_thetaRB_top)
-	bcs.append(bc_thetaRB_bot)
 
-	
+# LOOK AT https://prism.ac.uk/wp-content/uploads/2020/09/Beyond-CFD_Koki-Sagiyama.pdf !!!!!!
+# also at https://prism.ac.uk/wp-content/uploads/2020/09/Beyond-CFD_Koki-Sagiyama.pdf for n_2 partial_2 u_2 v_2
+# doesnt work! maybe his own package
+# seems impossible via dirichletbc: https://github.com/firedrakeproject/firedrake/issues/981
+# have to do it by variational formulation
+#bc_nonPenetration = DirichletBC(Z.sub(0), 
+#V1 = BoundaryComponentSubspace(Z.sub(0), "on_boundary", normal)
+#bc_nonPenetration = DirichletBC(Z.sub(0), Constant([0.0, 0.0]), "on_boundary")
+#bc_nonPenetration = DirichletBC(Z.sub(0).sub(1), Constant(0.0), (boundary_bot,boundary_top))
 
-problem = NonlinearVariationalProblem(F, upt, bcs=bcs)
+#bcs = [bc_nonPenetration]
+
+#print(assemble(inner(normal,tangential)*ds))
+#File(dataFolder+"nTau.pvd").write(normal, tangential)
+#FbcNonPenetration = (inner(dot(u,normal),dot(v,normal))+inner(u[0],v[0]))*ds((boundary_bot,boundary_top))
+#bc_nonPenetrationVar = EquationBC(FbcNonPenetration==0, u, (boundary_bot,boundary_top), V=Z.sub(0))
+#bcs = [bc_nonPenetrationVar]
+
+#FbcNonPenetration = inner(dot(u,normal),dot(v,normal))*ds((boundary_bot,boundary_top))
+#FbcTan = inner(dot(u,tangential),q)*ds((boundary_bot,boundary_top))
+#bc_nonPenetration = EquationBC(FbcNonPenetration==0, u, (boundary_bot,boundary_top), V=Z.sub(0))
+#bc_tan = EquationBC(FbcTan==0, u, (boundary_bot,boundary_top), V=Z.sub(0))
+#bcs = [bc_nonPenetration, bc_tan]
+
+
+
+FbcZero = inner(u,v)*ds
+bc_zero = EquationBC(FbcZero==0, u, "on_boundary", V=Z.sub(0))
+
+FbcNonPenetration = inner(u,normal*q)*ds
+bc_nonPenetration = EquationBC(FbcNonPenetration==0, u, "on_boundary", V=Z.sub(0))
+
+FbcTan = inner(dot(u,tangential),s)*ds()
+FbcTanOld = inner(dot(uOld,tangential),dot(v,tangential))*ds()
+bc_tan = EquationBC(FbcTan==0, u, "on_boundary", V=Z.sub(0))
+
+Fbc_nDut = 1.0/2.0*inner(dot(dot(nabla_grad(u)+grad(u),normal),tangential),dot(v,tangential))*ds()
+Fbc_nDutOld = 1.0/2.0*inner(dot(dot(nabla_grad(uOld)+grad(uOld),normal),tangential),dot(v,tangential))*ds()
+#F_navSlip = 1.0/2.0*(Fbc_nDut+Fbc_nDutOld)+1.0/2.0*alpha*(FbcTan+FbcTanOld)
+F_navSlip = Fbc_nDut+alpha*FbcTan
+F_temp = 1.0/10000000.0*inner(tangential,v)*ds()-FbcTan
+bc_temp = EquationBC(F_temp==0, u, "on_boundary", V=Z.sub(0))
+bc_navSlip = EquationBC(F_navSlip==0, u, "on_boundary", V=Z.sub(0))
+#bcs = [bc_nonPenetration, bc_navSlip]
+
+
+bcs = []
+
+bc_rbBot = DirichletBC(Z.sub(2), Constant(1), (boundary_id_bot))
+bc_rbTop = DirichletBC(Z.sub(2), Constant(-1), (boundary_id_top))
+bcs.append(bc_rbBot)
+bcs.append(bc_rbTop)
+
+#bcs.append(bc_zero)
+#bcs.append(bc_navSlip)
+#bcs.append(bc_nonPenetration)
+
+problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
 
 
 # taken from the firedrake rayleigh benard example problem
@@ -415,7 +423,22 @@ while(t<tEnd):
 	if round(t,12) >= round(lastWrittenOutput + writeOutputEvery,12):
 		writeMeshFunctions()
 	
-	print(round(t/tEnd*100,12),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,12))
+	print("\n",round(t/tEnd*100,12),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,12))
+	l2Normal = abs(sqrt(assemble(inner(dot(u,normal),dot(u,normal))*ds)))
+#	print("\tl2 normal u ", l2Normal)
+	l2Tangential = abs(sqrt(assemble(inner(dot(u,tangential),dot(u,tangential))*ds)))
+#	print("\tl2 tangential u ", l2Tangential)
+	print("\tratio (l2 normal/l2 tangential) ",round(l2Normal/l2Tangential,12))
+	l1DivU = norm(div(u),"l1")
+#	print("\tl1 div u ", l1DivU)
+	l1U = norm(u,"l1")
+#	print("\tl1 u ", l1U)
+	print("\tratio (l1 div u/l1 u)",round(l1DivU/l1U,12))
+	l2DivU = norm(div(u),"l2")
+#	print("\tl2 div u ", l2DivU)
+	l2U = norm(u,"l2")
+#	print("\tl2 u ", l2U)
+	print("\tratio (l2 div u/l2 u)",round(l2DivU/l2U,12))
 	tWorld = datetime.datetime.now()
 
 finishTime = datetime.datetime.now()
