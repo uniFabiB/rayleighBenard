@@ -1,0 +1,29 @@
+simulation info
+	simulationId = 		2022-08-24_18-02-42.939243_-_8937217299
+	recoveryScriptFile = 		used_script_simulation_2022-08-24_18-02-42.939243_-_8937217299.py
+	time_start = 		2022-08-24 18:02:42.939243
+	nx = 		20
+	ny = 		20
+	Lx = 		1.0
+	Ly = 		1.0
+	tau = 		0.0001
+	tEnd = 		1.0
+	alpha = 		0.0
+	nu = 		1.0
+	kappa = 		1.0
+	Ra = 		1000000.0
+	Pr = 		1.0
+	problem = 		
+	timeDiscretisation = 		
+
+solving info
+	solving start = 		2022-08-24 18:02:46.227663
+
+ERROR INFO
+script stopped because of an error
+	errorTime = 		2022-08-24 18:27:05.653264
+	errorSimulationTime = 		0.03139999999999987
+	completeDuration = 		0:24:22.714021
+	error type = 		<class 'KeyboardInterrupt'>
+	error value = 		
+	error traceback = 		['Traceback (most recent call last):\n', '  File "testRayleighBenardBoussinesq.py", line 414, in <module>\n    solver.solve()\n', '  File "PETSc/Log.pyx", line 115, in petsc4py.PETSc.Log.EventDecorator.decorator.wrapped_func\n', '  File "PETSc/Log.pyx", line 116, in petsc4py.PETSc.Log.EventDecorator.decorator.wrapped_func\n', '  File "/home/bleitner/local/simulation/firedrake/src/firedrake/firedrake/adjoint/variational_solver.py", line 90, in wrapper\n    out = solve(self, **kwargs)\n', '  File "/home/bleitner/local/simulation/firedrake/src/firedrake/firedrake/variational_solver.py", line 278, in solve\n    self.snes.solve(None, work)\n', '  File "PETSc/SNES.pyx", line 590, in petsc4py.PETSc.SNES.solve\n', '  File "PETSc/petscsnes.pxi", line 321, in petsc4py.PETSc.SNES_Function\n', '  File "/home/bleitner/local/simulation/firedrake/src/firedrake/firedrake/solving_utils.py", line 397, in form_function\n    @staticmethod\n', 'KeyboardInterrupt\n']
