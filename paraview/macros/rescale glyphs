@@ -1,0 +1,47 @@
+# trace generated using paraview version 5.10.1
+#import paraview
+#paraview.compatibility.major = 5
+#paraview.compatibility.minor = 10
+
+#### import the simple module from the paraview
+from paraview.simple import *
+#### disable automatic camera reset on 'Show'
+
+
+newScaleFactor = input("new scale factor")
+newScaleFactor = float(newScaleFactor)
+
+
+
+
+names = []
+resources = []
+items = GetSources().items()
+
+
+for (k, resource) in items:
+    name = k[0]
+    names.append(name)
+    resources.append(resource)
+#    id = k[1]
+#    ids.append(id)
+
+
+glyphIndices = []
+for i in range(len(names)):
+    print("for", names[i])
+    if "lyph" in names[i]:
+        print("glyph",names[i])
+        glyphIndices.append(i)
+
+n = len(glyphIndices)
+for i in range(n):
+    resource = resources[glyphIndices[i]]
+    SetActiveSource(resource)
+    print(resource)
+    resource.SetPropertyWithName("ScaleFactor", newScaleFactor)
+#    print(resource)
+ #   GetActiveSource().scaleFactor = newScaleFactor
+
+for view in GetViewsInLayout(GetLayoutByName("Layout #1")):
+    view.Update()
