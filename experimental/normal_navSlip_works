@@ -1,0 +1,88 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import myUtilities
+from myMeshes import *
+from firedrake import *
+
+outputFolder = "output/"
+
+my_ensemble = Ensemble(COMM_WORLD, COMM_WORLD.size)
+comm = my_ensemble.comm
+
+
+nXY = 64
+Lx = 1
+Ly = 1.0
+
+
+nx = round(nXY*Lx/Ly)
+ny = nXY
+
+ampFreqOffsetList = [[0.1,1.0,0.0]] # examples: [[0.1,1.0,0.0],[0.1,2.0,0.0]] or [[0.1,1.0,pi/2.0]]
+
+mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly,"x", comm = comm)	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
+boundary_id_bot = 1
+boundary_id_top = 2
+
+Vc = mesh.coordinates.function_space()
+x, y = SpatialCoordinate(mesh)
+for ampFreqOffset in ampFreqOffsetList:
+	amp = ampFreqOffset[0]
+	freq = ampFreqOffset[1]
+	offset = ampFreqOffset[2]	
+	y = y + amp * sin((2*pi*freq*x+offset)/Lx)
+f = Function(Vc).interpolate(as_vector([x, y]))
+mesh.coordinates.assign(f)
+
+
+
+n = FacetNormal(mesh)
+tan = as_vector((-n[1],n[0]))
+x,y = SpatialCoordinate(mesh)
+
+
+
+V_u = VectorFunctionSpace(mesh, 'CG', 1)
+V_p = FunctionSpace(mesh, 'CG', 1)
+u = TrialFunction(V_u)
+v = TestFunction(V_u)
+p = TrialFunction(V_p)
+q = TestFunction(V_p)
+
+
+f = Function(V_u)
+x, y = SpatialCoordinate(mesh)
+f.interpolate(as_vector([10.0*exp(-1.0*(x-0.5)**2.0),2.2*exp(-5.0*(x-0.5)**2.0)]))
+g = Function(V_u)
+g.interpolate(as_vector([10.0*sin(2*pi*x/Lx),10.0*sin(2*pi*x/Lx)]))
+a = inner(grad(u), grad(v)) * dx 
+
+
+L = inner(f, v) * dx
+
+u = Function(V_u)
+u.rename("u")
+
+
+v_n = dot(v,n)*n
+v_tau = dot(v,tan)*tan
+u_n = dot(u,n)*n
+u_tau = dot(u,tan)*tan
+
+alpha = 0.01
+
+Du = 1.0/2.0*(grad(u)+nabla_grad(u))
+navSlipBc = EquationBC(inner(dot(n,Du)-alpha*u,v_tau)*ds-inner(u,v_n)*ds==0, u, (1,2))
+bcs = []
+bcs.append(navSlipBc)
+solve(inner(grad(u), grad(v)) * dx - L == 0, u, bcs=bcs)
+uptFile = File(outputFolder+"upt.pvd", comm = COMM_WORLD)
+print("u*n: ",assemble(abs(inner(u,n))*ds))
+print("u*tau: ",assemble(abs(inner(u,tan))*ds))
+print("n*Du*tau - alpha u*tau n: ",assemble(abs(inner(dot(n,Du)-alpha*u,tan))*ds))
+print("n*Du*tau - u*tau n: ",assemble(abs(inner(dot(n,Du)-u,tan))*ds))
+
+
+uptFile.write(u)
+print("done")
