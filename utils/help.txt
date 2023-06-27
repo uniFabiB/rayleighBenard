@@ -40,6 +40,10 @@ tmux
 		ssh (connect to server)
 		tmux attach
 
+pictures
+	convert transparent to color
+		for i in *.png ; do convert "$i" -background "#eeeeee" -flatten "../out/$i" ; done
+
 video
 	pics.0000.png	pics.0001.png	pics.0002.png	...
 	
