@@ -288,7 +288,7 @@ F_test = (
 
 
 
-F = F_rb_PadbergGehle_backwards_noSlip
+F = F_rb_crankNicolson_noSlip
 
 
 # initial conditions for u
