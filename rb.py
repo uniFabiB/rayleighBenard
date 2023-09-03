@@ -5,6 +5,7 @@ import myUtilities
 from firedrake import *
 import datetime
 import weakref
+import warnings
 
 outputFolder = "output/"
 
@@ -17,16 +18,18 @@ utils.generateRecoveryScript(__file__)
 
 
 ### PARAMETERS ###
-nXY = 256
+nXY = 64
 
 nOut = nXY
 
 uSpace = "Lag"			# either Hdiv or Lag
 
-dt = 10.0**(-6)
+dt = 0.05
 writeOutputEveryXsteps = 1
 writeOutputEvery = dt*writeOutputEveryXsteps			# write mesh functions
 writeUP = False						# output u and p?
+
+
 
 Lx = 2.0
 Ly = 1.0
@@ -286,9 +289,25 @@ F_test = (
 )
 
 
+F_crankNicolson_freeFall = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))*dx
+		+ inner(grad(p),v)*dx
+		+ sqrt(Pr/Ra) * nu * 1.0/2.0*(inner(grad(u), grad(v))+inner(grad(uOld), grad(v)))*dx
+		- 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/2.0*(inner(dot(u,grad(theta)),s)+inner(dot(uOld,grad(thetaOld)),s))*dx
+		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))*dx
+		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
+	)
+	+ inner(u,grad(q))*dx
+)
 
 
-F = F_rb_crankNicolson_noSlip
+F = F_crankNicolson_freeFall
 
 
 # initial conditions for u
@@ -350,17 +369,126 @@ problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
 nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True), Z.sub(2)])
 
 
+
+
 parameters_easySplit = {	# splits the solving of the nse and the temperature equation and nothing else
 	# seems to be more robust but is super slow on big grids
 	"pc_type": "fieldsplit",
 	"pc_fieldsplit_type": "multiplicative",		# additive multiplicative symmetric_multiplicative special schur gkb
 	"pc_fieldsplit_0_fields": "0,1",
 	"pc_fieldsplit_1_fields": "2",
+#	           'snes_monitor': None,
+#                   'snes_view': None,
+#                   'ksp_monitor_true_residual': None,
+#                   'snes_converged_reason': None,
+#                   'ksp_converged_reason': None
 }
 
 
-#solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_easySplit)
-solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
+parameters_demo_2 = {	# see also https://arxiv.org/pdf/1706.01346.pdf
+	"mat_type": "matfree",
+	"snes_monitor": None,
+	"ksp_type": "fgmres",
+	"ksp_gmres_modifiedgramschmidt": True,
+	"pc_type": "fieldsplit",
+	"pc_fieldsplit_type": "multiplicative",
+	"pc_fieldsplit_0_fields": "0,1",
+	"pc_fieldsplit_1_fields": "2",
+	"fieldsplit_0": {
+		"ksp_type": "gmres",
+		"ksp_gmres_modifiedgramschmidt": True,
+		"ksp_rtol": 1e-2,
+		"pc_type": "fieldsplit",
+		"pc_fieldsplit_type": "schur",
+		"pc_fieldsplit_schur_fact_type": "lower",
+
+		"fieldsplit_0": {
+			"ksp_type": "preonly",
+			"pc_type": "python",
+			"pc_python_type": "firedrake.AssembledPC",
+			"assembled_pc_type": "hypre"
+		},
+
+		"fieldsplit_1": {
+			"ksp_type": "preonly",
+			"pc_type": "python",
+			"pc_python_type": "firedrake.PCDPC",
+			"pcd_Mp_ksp_type": "preonly",
+			"pcd_Mp_pc_type": "ilu",
+			"pcd_Kp_ksp_type": "preonly",
+			"pcd_Kp_pc_type": "hypre",
+			"pcd_Fp_mat_type": "aij"
+		}
+	},
+	"fieldsplit_1": {
+		"ksp_type": "gmres",
+		"ksp_rtol": "1e-4",
+		"pc_type": "python",
+		"pc_python_type": "firedrake.AssembledPC",
+		"assembled_pc_type": "hypre"
+	}
+}
+
+
+
+parameters_demo_1 = {
+	"mat_type": "matfree",
+	"snes_monitor": None,
+	
+	"ksp_type": "gmres",
+	"pc_type": "fieldsplit",
+	"pc_fieldsplit_type": "multiplicative",
+	"pc_fieldsplit_0_fields": "0,1",
+	"pc_fieldsplit_1_fields": "2",
+
+	"fieldsplit_0": {
+		"ksp_type": "preonly",
+		"pc_type": "python",
+		"pc_python_type": "firedrake.AssembledPC",
+		"assembled_pc_type": "lu",
+		"assembled_pc_factor_mat_solver_type": "mumps"
+		},
+
+	"fieldsplit_1": {
+		"ksp_type": "preonly",
+		"pc_type": "python",
+		"pc_python_type": "firedrake.AssembledPC",
+		"assembled_pc_type": "lu"
+	}
+}
+
+parameters_my = {
+	"mat_type": "matfree",
+#	"snes_monitor": None,
+#	"ksp_monitor_true_residual": None,
+#	"ksp_converged_reason": None,
+	
+	"ksp_type": "gmres",
+	"ksp_gmres_restart": 15,
+	"pc_type": "fieldsplit",
+	"pc_fieldsplit_type": "multiplicative",
+	"pc_fieldsplit_0_fields": "0,1",
+	"pc_fieldsplit_1_fields": "2",
+
+	"fieldsplit_0": {
+		"ksp_type": "preonly",
+		"pc_type": "python",
+		"pc_python_type": "firedrake.AssembledPC",
+		"assembled_pc_type": "lu",
+		"assembled_pc_factor_mat_solver_type": "mumps",
+		},
+
+	"fieldsplit_1": {
+		"ksp_type": "preonly",
+		"pc_type": "python",
+		"pc_python_type": "firedrake.AssembledPC",
+		"assembled_pc_type": "lu",
+	}
+}
+
+appctx = {"velocity_space": 0}
+solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
+#solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
 uptFile = File(dataFolder+"upt.pvd", comm = COMM_WORLD)
 lastWrittenOutput = -1
@@ -418,32 +546,48 @@ COMM_WORLD.Barrier()
 utils.print("starting to solve")
 
 
-
-
+uOld2 = u
+thetaOld2 = theta
 
 tWorld = datetime.datetime.now()
+
+convergencewarningnumber = 0
+
 while(t<tEnd):
 	
-	solver.solve()
+	try:
+		solver.solve()
+		t = t + dt
+		utils.setSimulationTime(t)
+		u, p, theta = upt.subfunctions		# depending on the firedrake version might have to use upt.split()
+		
+		uOld2.assign(uOld)
+		thetaOld2.assign(thetaOld)
+		
+		uOld.assign(u)
+		thetaOld.assign(theta)
+		
+		if round(t,12) >= round(lastWrittenOutput + writeOutputEvery,12):
+			writeMeshFunctions()
+		#utils.print("u\t",assemble(inner(u,u)*ds))	
+		#utils.print("u tau\t",assemble(inner(u,tau)*ds))	
+		#utils.print("u n\t",assemble(inner(u,n)*ds))	
+		#utils.print("n Du tau\t",assemble(inner(dot(n,Du),tau)*ds))
+		#utils.print("temp\t",assemble(inner(alpha*u+dot(n,Du),tau)*ds))
+		
+		
+		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
+		tWorld = datetime.datetime.now()
+	except ConvergenceError:
+		utils.print("solver error, trying again with slightly changed data")
+		# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
+		# "solution" for now change the data a bit and try again		
+		u.assign(1.0/11.0*(10*uOld + uOld2))
+		theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
+		convergencewarningnumber += 1
+		utils.putInfoInInfoString("CONVERGENCE WARNING "+str(convergencewarningnumber), "at time " + str(t) + ": trying again with slightly changed data (weighted average over last steps)")
+		utils.writeInfoFile()
 	
 	
-	t = t + dt
-	utils.setSimulationTime(t)
-	u, p, theta = upt.subfunctions		# depending on the firedrake version might have to use upt.split()
-	uOld.assign(u)
-	thetaOld.assign(theta)
-	
-	if round(t,12) >= round(lastWrittenOutput + writeOutputEvery,12):
-		writeMeshFunctions()
-	#utils.print("u\t",assemble(inner(u,u)*ds))	
-	#utils.print("u tau\t",assemble(inner(u,tau)*ds))	
-	#utils.print("u n\t",assemble(inner(u,n)*ds))	
-	#utils.print("n Du tau\t",assemble(inner(dot(n,Du),tau)*ds))
-	#utils.print("temp\t",assemble(inner(alpha*u+dot(n,Du),tau)*ds))
-	
-	
-	utils.print(round(t/tEnd*100,12),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
-	tWorld = datetime.datetime.now()
 utils.writeEndInfo()
-
 
