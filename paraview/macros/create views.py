@@ -68,7 +68,7 @@ def showArray(source, functionname, view, scaleMin, scaleMax):
     thetaLUT = GetColorTransferFunction(functionname)
 
     # apply my color scale
-    thetaLUT.ApplyPreset('myCoolToWarm', True)
+    thetaLUT.ApplyPreset('my cool to warm', True)
     
 # Rescale transfer function
     thetaLUT.RescaleTransferFunction(scaleMin, scaleMax)
