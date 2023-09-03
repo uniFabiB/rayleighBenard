@@ -581,6 +581,8 @@ while(t<tEnd):
 		utils.print("solver error, trying again with slightly changed data")
 		# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
 		# "solution" for now change the data a bit and try again		
+
+		# TRY ANOTHER PRECONDITIONER AT ERROR!!!
 		u.assign(1.0/11.0*(10*uOld + uOld2))
 		theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
 		convergencewarningnumber += 1
