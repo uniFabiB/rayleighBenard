@@ -1,7 +1,8 @@
 [
 	{
 		"ColorSpace" : "Lab",
-		"Name" : "abc",
+		"Name" : "my cool to warm",
+		"Creator" : "fabi b",
 		"Points" : 
 		[
 			-1.0,
@@ -38,4 +39,3 @@
 		]
 	}
 ]
-
