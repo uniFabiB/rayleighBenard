@@ -5,7 +5,6 @@ import myUtilities
 from firedrake import *
 import datetime
 import weakref
-import warnings
 
 outputFolder = "output/"
 
