@@ -583,6 +583,8 @@ while(t<tEnd):
 		# "solution" for now change the data a bit and try again		
 
 		# TRY ANOTHER PRECONDITIONER AT ERROR!!!
+		# CHECK IF IT IS THE RIGHT ERROR FIRST
+		# PRINT ERROR STACK ANYWAYS
 		u.assign(1.0/11.0*(10*uOld + uOld2))
 		theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
 		convergencewarningnumber += 1
