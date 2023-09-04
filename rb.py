@@ -17,7 +17,7 @@ utils.generateRecoveryScript(__file__)
 
 
 ### PARAMETERS ###
-nXY = 64
+nXY = 32
 
 nOut = nXY
 
@@ -551,14 +551,39 @@ thetaOld2 = theta
 tWorld = datetime.datetime.now()
 
 convergencewarningnumber = 0
+revertSolverAfterXsolves = -1
 
 while(t<tEnd):
-	
+	utils.print(revertSolverAfterXsolves)
+	if revertSolverAfterXsolves > -1:
+		if revertSolverAfterXsolves == 0:
+			solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
+			utils.print("reverting to my parameters")
+		revertSolverAfterXsolves += -1
 	try:
+		utils.print(solver.parameters)
 		solver.solve()
+	except ConvergenceError as convError:
+		utils.print(convError)
+		if "DIVERGED_LINEAR_SOLVE" in str(convError):
+			revertSolverAfterXsolves = 1
+			utils.print("DIVERGED_LINEAR_SOLVE, trying again with different solver parameters")
+			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
+			# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
+			# "solution" for now change the data a bit and try again		
+
+			# TRY ANOTHER PRECONDITIONER AT ERROR!!!
+			# CHECK IF IT IS THE RIGHT ERROR FIRST
+			# PRINT ERROR STACK ANYWAYS
+#			u.assign(1.0/11.0*(10*uOld + uOld2))
+#			theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
+			convergencewarningnumber += 1
+			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t) + ": trying again with slightly changed data (weighted average over last steps)")
+			utils.writeInfoFile()
+	else:
 		t = t + dt
 		utils.setSimulationTime(t)
-		u, p, theta = upt.subfunctions		# depending on the firedrake version might have to use upt.split()
+		u, p, theta = upt.split()	# depending on the firedrake version have to either use upt.split() or upt.subfunctions
 		
 		uOld2.assign(uOld)
 		thetaOld2.assign(thetaOld)
@@ -573,24 +598,8 @@ while(t<tEnd):
 		#utils.print("u n\t",assemble(inner(u,n)*ds))	
 		#utils.print("n Du tau\t",assemble(inner(dot(n,Du),tau)*ds))
 		#utils.print("temp\t",assemble(inner(alpha*u+dot(n,Du),tau)*ds))
-		
-		
+	
 		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
 		tWorld = datetime.datetime.now()
-	except ConvergenceError:
-		utils.print("solver error, trying again with slightly changed data")
-		# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
-		# "solution" for now change the data a bit and try again		
-
-		# TRY ANOTHER PRECONDITIONER AT ERROR!!!
-		# CHECK IF IT IS THE RIGHT ERROR FIRST
-		# PRINT ERROR STACK ANYWAYS
-		u.assign(1.0/11.0*(10*uOld + uOld2))
-		theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
-		convergencewarningnumber += 1
-		utils.putInfoInInfoString("CONVERGENCE WARNING "+str(convergencewarningnumber), "at time " + str(t) + ": trying again with slightly changed data (weighted average over last steps)")
-		utils.writeInfoFile()
-	
 	
 utils.writeEndInfo()
-
