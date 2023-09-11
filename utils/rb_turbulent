@@ -1,2 +1,7 @@
 Ra = 10^6, dt = 10.0^(-3), n = 64	->	schwankendes steady (relativ schnell vielleicht 30 min sim time)
 Ra = 10^7, dt = 10.0^(-4), n = 128	->	turbulentes steady (nach 1,5 stunden diverged 288 time steps)
+
+
+Sagy Ephrati PhD thesis DATA-DRIVEN STOCHASTIC MODELING FOR COARSENED COMPUTATIONAL GEOPHYSICAL FLUID DYNAMICS
+  beginning of 5.2.3, p 94
+    4096 × 2048 grid, which has been shown to be a sufficiently high resolution for the chosen Rayleigh number (Pr = 1, Ra = 10^10) [175]
