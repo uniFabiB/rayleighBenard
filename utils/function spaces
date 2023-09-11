@@ -1,0 +1,21 @@
+# 2023 04
+bdm should also work
+
+if delta coeffi goes down pressure should
+
+boffi brezzi fortin mixed finite elements
+lecture notes rg duran
+rg duran mixed finite element methods
+num pde fub
+http://wwwopt.mathematik.tu-darmstadt.de/dopelib/description_full.pdf	5.1.17
+volker john Finite Element Methods for Incompressible Flow Problems
+
+dg p 1 for pressure for bdm 2
+dg q 1 for pressure for rt 1
+
+has to be inf sup stable
+
+
+
+https://www.firedrakeproject.org/variational-problems.html#supported-finite-elements
+https://fenics.readthedocs.io/projects/ufl/en/latest/manual/form_language.html#element-families
