@@ -26,7 +26,7 @@ uSpace = "Lag"			# either Hdiv or Lag
 dt = 0.05
 writeOutputEveryXsteps = 1
 writeOutputEvery = dt*writeOutputEveryXsteps			# write mesh functions
-writeUP = False						# output u and p?
+writeUP = True						# output u and p? False True
 
 
 
@@ -37,12 +37,12 @@ t = 0.0
 tEnd = 100 #1.0
 
 ### only nav slip ###
-alpha = 100000.0		# alpha in tau Du n = alpha tau u
+alpha = 0.001		# alpha in tau Du n = alpha tau u
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
-kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**8			# ... + Ra * theta * e_2
+kappa = 0.01			# ... - kappa * Laplace theta ...
+Ra = 10.0**0			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 ampFreqOffsetList = [[0.15,1.0,0]] # examples: [[0.1,1.0,0.0],[0.1,2.0,0.0]] or [[0.1,1.0,pi/2.0]]
@@ -108,6 +108,8 @@ y = y + amp * sin(2*pi*freq*(x-offset)/Lx+freqSin*sin(2*pi*freq*(x-offset)/Lx)+f
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
 
+
+mesh = Mesh('mesh.msh')
 
 
 
@@ -304,9 +306,28 @@ F_crankNicolson_freeFall = (
 	)
 	+ inner(u,grad(q))*dx
 )
+DuOld = 0.5*(grad(uOld)+nabla_grad(uOld))
+
+F_crankNicolson_freeFall_NavSlip = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))*dx
+		+ inner(grad(p),v)*dx
+		+ sqrt(Pr/Ra) * nu *(inner(Du, grad(v))+inner(DuOld, grad(v)))*dx
+		+ sqrt(Pr/Ra) * nu * alpha * (inner(dot(u,tau)*tau,v)+inner(dot(uOld,tau)*tau, v))*ds
+		- 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/2.0*(inner(dot(u,grad(theta)),s)+inner(dot(uOld,grad(thetaOld)),s))*dx
+		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))*dx
+		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
+	)
+	+ inner(u,grad(q))*dx
+)
 
 
-F = F_crankNicolson_freeFall
+F = F_crankNicolson_freeFall_NavSlip
 
 
 # initial conditions for u
@@ -315,17 +336,36 @@ uOld.assign(u)
 
 
 x, y = SpatialCoordinate(mesh)
-#icTheta = 0.5*sin(2*pi*x/Lx)*exp(-4*(0.5-y)**2)+0.5
-icTheta = Constant(0.5)
+icTheta = 0.5*sin(2*pi*x/Lx)*exp(-4*(0.5-y)**2)+0.5
+
+
+#icTheta = 10.0*sin(2*pi*x/Lx)*sin(2*pi*y/Ly)*exp(-1*(x**2+y**2))
+expFactor = 0.5
+[amp, x0, y0] = [10.0, -1.0, 2.0]
+icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+[amp, x0, y0] = [-10.0, 2.0, 2.0]
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+[amp, x0, y0] = [-10.0, -3.0, 2.0]
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+[amp, x0, y0] = [10.0, 1.0, 1.0]
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+[amp, x0, y0] = [10.0, 6.0, 3.0]
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+[amp, x0, y0] = [-10.0, 4.0, 0.0]
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = Constant(0.)
+theta = project(icTheta, V_t)
+
+#icTheta = Constant(0.5)
 theta = project(icTheta, V_t)
 thetaOld.assign(theta)
 
 bcs = []
 
-bc_rbBot = DirichletBC(Z.sub(2), Constant(1.0), (boundary_id_bot))
-bc_rbTop = DirichletBC(Z.sub(2), Constant(0.0), (boundary_id_top))
-bcs.append(bc_rbBot)
-bcs.append(bc_rbTop)
+#bc_rbBot = DirichletBC(Z.sub(2), Constant(1.0), (boundary_id_bot))
+#bc_rbTop = DirichletBC(Z.sub(2), Constant(0.0), (boundary_id_top))
+#bcs.append(bc_rbBot)
+#bcs.append(bc_rbTop)
 
 
 u_n = dot(u,n)
@@ -352,8 +392,12 @@ if uSpace == "Hdiv":
 	bc_noPenHdiv = DirichletBC(Z.sub(0), Constant((0.0,0.0)), (boundary_id_bot,boundary_id_top)) # because of the hdiv space setting 0 bc for it is only setting u cdot n = 0 #https://github.com/firedrakeproject/firedrake/issues/169#issuecomment-34557942
 	bcs.append(bc_noPenHdiv)
 elif uSpace == "Lag":
-	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), (boundary_id_bot,boundary_id_top))
-	bcs.append(bcs_noSlip)
+	
+#	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), (boundary_id_bot,boundary_id_top))
+	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary")
+	#bcs.append(bcs_noSlip)
+	
+	
 	#bc_uN = EquationBC(inner(dot(u,n),dot(v,n))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0))
 	#bc_uN_nav = EquationBC(inner(dot(tau,dot(Du,n))+alpha*dot(u,tau),dot(v,tau))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0), bcs=bc_uN)
 	#bc_uN_nav = EquationBC(inner(dot(tau,dot(Du,n))+alpha*dot(u,tau),dot(v,tau))*ds+inner(dot(u,n),dot(v,n))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0))
@@ -554,14 +598,14 @@ convergencewarningnumber = 0
 revertSolverAfterXsolves = -1
 
 while(t<tEnd):
-	utils.print(revertSolverAfterXsolves)
+#	utils.print(revertSolverAfterXsolves)
 	if revertSolverAfterXsolves > -1:
 		if revertSolverAfterXsolves == 0:
 			solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
 			utils.print("reverting to my parameters")
 		revertSolverAfterXsolves += -1
 	try:
-		utils.print(solver.parameters)
+#		utils.print(solver.parameters)
 		solver.solve()
 	except ConvergenceError as convError:
 		utils.print(convError)
@@ -583,7 +627,7 @@ while(t<tEnd):
 	else:
 		t = t + dt
 		utils.setSimulationTime(t)
-		u, p, theta = upt.split()	# depending on the firedrake version have to either use upt.split() or upt.subfunctions
+		u, p, theta = upt.subfunctions	# depending on the firedrake version have to either use upt.split() (old) or upt.subfunctions (newer)
 		
 		uOld2.assign(uOld)
 		thetaOld2.assign(thetaOld)
@@ -595,9 +639,11 @@ while(t<tEnd):
 			writeMeshFunctions()
 		#utils.print("u\t",assemble(inner(u,u)*ds))	
 		#utils.print("u tau\t",assemble(inner(u,tau)*ds))	
-		#utils.print("u n\t",assemble(inner(u,n)*ds))	
+		utils.print("u n\t",assemble(inner(u,n)*inner(u,n)*ds))	
 		#utils.print("n Du tau\t",assemble(inner(dot(n,Du),tau)*ds))
-		#utils.print("temp\t",assemble(inner(alpha*u+dot(n,Du),tau)*ds))
+		utils.print("temp0.5\t",assemble(inner(0.5*alpha*u+dot(n,Du),tau)*inner(0.5*alpha*u+dot(n,Du),tau)*ds))
+		utils.print("temp1.0\t",assemble(inner(1.0*alpha*u+dot(n,Du),tau)*inner(1.0*alpha*u+dot(n,Du),tau)*ds))
+		utils.print("temp2.0\t",assemble(inner(2.0*alpha*u+dot(n,Du),tau)*inner(2.0*alpha*u+dot(n,Du),tau)*ds))
 	
 		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
 		tWorld = datetime.datetime.now()
