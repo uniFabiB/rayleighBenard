@@ -326,6 +326,15 @@ F_crankNicolson_freeFall_NavSlip = (
 	+ inner(u,grad(q))*dx
 )
 
+#!!!!
+#!!!!
+#!!!!
+#!!!!
+# IMPLEMENT THIS: https://gmd.copernicus.org/preprints/gmd-2021-367/gmd-2021-367.pdf
+#!!!!
+#!!!!
+#!!!!
+#!!!!
 
 F = F_crankNicolson_freeFall_NavSlip
 
