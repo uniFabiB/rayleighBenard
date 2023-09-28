@@ -336,6 +336,29 @@ F_crankNicolson_freeFall_NavSlip = (
 #!!!!
 #!!!!
 
+# seems to work for navier slip bc with high order hdiv!!!
+F_test = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		1.0/1.0*(inner(dot(u, nabla_grad(u)), v))*dx
+		+ 2.0 * sqrt(Pr/Ra) * nu *(inner(Du, Dv))*dx
+		+ 2.0 * sqrt(Pr/Ra) * nu * alpha * (inner(u,v))*ds
+		#+ 2.0 * sqrt(Pr/Ra) * nu * (inner(dot(v,n),dot(n,dot(Du,n))))*ds
+		#+ 2.0 * sqrt(Pr/Ra) * nu * (inner(dot(u,n),dot(n,dot(Dv,n))))*ds
+		- 1.0/1.0*(inner(theta,v[1]))*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
+		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s)))*dx
+		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
+	)
+	+ inner(grad(p),v)*dx
+	+ inner(u,grad(q))*dx
+)
+
+
+
 F = F_crankNicolson_freeFall_NavSlip
 
 
