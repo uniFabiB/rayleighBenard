@@ -18,12 +18,14 @@ utils.generateRecoveryScript(__file__)
 
 ### PARAMETERS ###
 nXY = 32
+order = 1
 
 nOut = nXY
 
-uSpace = "Lag"			# either Hdiv or Lag
+uSpace = "Hdiv"			# either Hdiv or Lag
 
-dt = 0.05
+#dt = 0.0001
+dt = 0.1
 writeOutputEveryXsteps = 1
 writeOutputEvery = dt*writeOutputEveryXsteps			# write mesh functions
 writeUP = True						# output u and p? False True
@@ -34,15 +36,15 @@ Lx = 2.0
 Ly = 1.0
 
 t = 0.0
-tEnd = 100 #1.0
+tEnd = 10000 #1.0
 
 ### only nav slip ###
-alpha = 0.001		# alpha in tau Du n = alpha tau u
+#alpha = 1.0		# alpha in tau Du n + alpha tau u = 0
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
-kappa = 0.01			# ... - kappa * Laplace theta ...
-Ra = 10.0**0			# ... + Ra * theta * e_2
+kappa = 1.0			# ... - kappa * Laplace theta ...
+Ra = 10.0**4			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 ampFreqOffsetList = [[0.15,1.0,0]] # examples: [[0.1,1.0,0.0],[0.1,2.0,0.0]] or [[0.1,1.0,pi/2.0]]
@@ -69,16 +71,13 @@ printErrors = True
 
 #nCells = nx*ny*2	for diagonal "left" or "right"
 #nCells = nx*ny*4	for diagonal "crossed"
-nPerCore = abs(sqrt(nx*ny/COMM_WORLD.size))
-utils.print("n / core ", nPerCore)
 
 utils.putInfoInInfoString("nXY",nXY)
-utils.putInfoInInfoString("n/core",nPerCore)
 utils.putInfoInInfoString("dt",dt)
 utils.putInfoInInfoString("Lx",Lx)
 utils.putInfoInInfoString("Ly",Ly)
 utils.putInfoInInfoString("tEnd",tEnd)
-utils.putInfoInInfoString("alpha",alpha)
+#utils.putInfoInInfoString("alpha",alpha)
 utils.putInfoInInfoString("kappa",kappa)
 utils.putInfoInInfoString("Ra",Ra)
 utils.putInfoInInfoString("projectPoutputToAverageFree",projectPoutputToAverageFree)
@@ -90,7 +89,7 @@ utils.putInfoInInfoString("dataFolder",dataFolder)
 mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = meshDiagonal)	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 boundary_id_bot = 1
 boundary_id_top = 2
-
+boundary_ids = (1,2)
 # change y variable
 Vc = mesh.coordinates.function_space()
 x, y = SpatialCoordinate(mesh)
@@ -99,22 +98,25 @@ x, y = SpatialCoordinate(mesh)
 #	freq = ampFreqOffset[1]
 #	offset = ampFreqOffset[2]	
 #	y = y + amp * sin((2*pi*freq*x+offset)/Lx)
-amp = 0.02
+amp = 0.1#0.02
 freq = 1
-freqSin = 3
-freqCos = 8
+freqSin = 0#3
+freqCos = 0#8
 offset = 0.4*Lx
 y = y + amp * sin(2*pi*freq*(x-offset)/Lx+freqSin*sin(2*pi*freq*(x-offset)/Lx)+freqCos*cos(2*pi*freq*(x-offset)/Lx))
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
 
 
-mesh = Mesh('mesh.msh')
+#mesh = Mesh('mesh.msh')
 
+
+#nPerCore = abs(sqrt(nx*ny/COMM_WORLD.size))
+nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super nice
+utils.print("sqrt(n^2 / core) ", nPerCore)
 
 
 utils.writeInfoFile()
-
 
 
 n = FacetNormal(mesh)
@@ -122,15 +124,18 @@ tau = as_vector((-n[1],n[0]))
 x,y = SpatialCoordinate(mesh)
 
 
-
-
-order = 1
 if uSpace == "Hdiv":
 	V_u = FunctionSpace(mesh, "RT", order+1)
 elif uSpace == "Lag":
 	V_u = VectorFunctionSpace(mesh, "CG", order+1)
 V_p = FunctionSpace(mesh, "CG", order)
 V_t = FunctionSpace(mesh, "CG", order)
+
+
+alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
+
+alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
+
 
 
 Z = V_u * V_p * V_t
@@ -149,12 +154,14 @@ thetaOld = Function(V_t)
 
 
 
+
 nu = Constant(float(nu))
 kappa = Constant(float(kappa))
 Ra = Constant(float(Ra))
 Pr = Constant(float(Pr))
 
 Du = 0.5*(grad(u)+nabla_grad(u))
+DuOld = 0.5*(grad(uOld)+nabla_grad(uOld))
 Dv = 0.5*(grad(v)+nabla_grad(v))
 v_n = dot(n,v)*n
 v_tau = dot(tau,v)*tau
@@ -306,38 +313,51 @@ F_crankNicolson_freeFall = (
 	)
 	+ inner(u,grad(q))*dx
 )
-DuOld = 0.5*(grad(uOld)+nabla_grad(uOld))
 
-F_crankNicolson_freeFall_NavSlip = (
-	inner(u-uOld,v)*dx
+#https://gmd.copernicus.org/preprints/gmd-2021-367/gmd-2021-367.pdf
+
+
+
+
+F_crankNicolson_org_NavSlip_hDiv = (
+	1.0/Pr *inner(u-uOld,v)*dx
 	+ dt*(
-		1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))*dx
-		+ inner(grad(p),v)*dx
-		+ sqrt(Pr/Ra) * nu *(inner(Du, grad(v))+inner(DuOld, grad(v)))*dx
-		+ sqrt(Pr/Ra) * nu * alpha * (inner(dot(u,tau)*tau,v)+inner(dot(uOld,tau)*tau, v))*ds
-		- 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))*dx
+		1.0/(2.0*Pr) * inner(dot(u, nabla_grad(u))+dot(uOld, nabla_grad(uOld)), v)*dx
+		+ nu * inner(Du+DuOld, Dv)*dx
+		+ nu * alpha * inner(u+uOld,v)*ds
+		- Ra * 1.0/2.0 * inner(theta+thetaOld,v[1])*dx
 	)
 	+ inner(theta-thetaOld,s)*dx
 	+ dt*( 
-		1.0/2.0*(inner(dot(u,grad(theta)),s)+inner(dot(uOld,grad(thetaOld)),s))*dx
-		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))*dx
+		1.0/2.0 * inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
+		+ 1.0/2.0 * kappa * inner(grad(theta+thetaOld), grad(s))*dx
 		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
 	)
 	+ inner(u,grad(q))*dx
+	+ inner(grad(p),v)*dx
 )
 
-#!!!!
-#!!!!
-#!!!!
-#!!!!
-# IMPLEMENT THIS: https://gmd.copernicus.org/preprints/gmd-2021-367/gmd-2021-367.pdf
-#!!!!
-#!!!!
-#!!!!
-#!!!!
 
-# seems to work for navier slip bc with high order hdiv!!!
-F_test = (
+F_crankNicolson_freeFall_NavSlip_hDiv = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		1.0/2.0*inner(dot(u, nabla_grad(u)) + dot(uOld, nabla_grad(uOld)), v)*dx
+		+ sqrt(Pr/Ra) * nu * inner(Du + DuOld, Dv)*dx
+		+ sqrt(Pr/Ra) * nu * inner(u + uOld,alpha * v)*ds
+		- 1.0/2.0*inner(theta+thetaOld,v[1])*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
+		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
+		#- inner(dot(n,grad(theta+thetaOld)),s)*ds term?!?!?!?!?!?!?!
+	)
+	+ inner(u,grad(q))*dx
+	+ inner(grad(p),v)*dx
+)
+
+
+F_back_freeFall_NavSlip_hDiv = (
 	inner(u-uOld,v)*dx
 	+ dt*(
 		1.0/1.0*(inner(dot(u, nabla_grad(u)), v))*dx
@@ -351,59 +371,54 @@ F_test = (
 	+ dt*( 
 		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
 		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s)))*dx
-		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
+		#- inner(dot(n,grad(theta)),s)*ds term?!?!?!?!?!?!?!
 	)
-	+ inner(grad(p),v)*dx
 	+ inner(u,grad(q))*dx
+	+ inner(grad(p),v)*dx
 )
 
 
-
-F = F_crankNicolson_freeFall_NavSlip
+F = F_crankNicolson_freeFall_NavSlip_hDiv
 
 
 # initial conditions for u
 u = project(Constant([0.0,0.0]), V_u)
 uOld.assign(u)
 
-
 x, y = SpatialCoordinate(mesh)
-icTheta = 0.5*sin(2*pi*x/Lx)*exp(-4*(0.5-y)**2)+0.5
+#icTheta = 0.5*sin(2*pi*x/Lx)*exp(-4*(0.5-y)**2)+0.5
 
 
 #icTheta = 10.0*sin(2*pi*x/Lx)*sin(2*pi*y/Ly)*exp(-1*(x**2+y**2))
 expFactor = 0.5
 [amp, x0, y0] = [10.0, -1.0, 2.0]
-icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, 2.0, 2.0]
-icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, -3.0, 2.0]
-icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [10.0, 1.0, 1.0]
-icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [10.0, 6.0, 3.0]
-icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, 4.0, 0.0]
-icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-#icTheta = Constant(0.)
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+
+icTheta = Constant(0.5)
 theta = project(icTheta, V_t)
 
-#icTheta = Constant(0.5)
-theta = project(icTheta, V_t)
 thetaOld.assign(theta)
 
 bcs = []
 
-#bc_rbBot = DirichletBC(Z.sub(2), Constant(1.0), (boundary_id_bot))
-#bc_rbTop = DirichletBC(Z.sub(2), Constant(0.0), (boundary_id_top))
-#bcs.append(bc_rbBot)
-#bcs.append(bc_rbTop)
+bc_rbBot = DirichletBC(Z.sub(2), Constant(1.0), (boundary_id_bot))
+bc_rbTop = DirichletBC(Z.sub(2), Constant(0.0), (boundary_id_top))
+bcs.append(bc_rbBot)
+bcs.append(bc_rbTop)
 
 
 u_n = dot(u,n)
 v_n = dot(v,n)
-
-
 
 
 #bc_u = EquationBC(inner(dot(n,Du) - alpha*u,v_tau)*ds+inner(u,v_n)*ds==0, u, (1,2), V=Z.sub(0))
@@ -421,7 +436,7 @@ v_n = dot(v,n)
 #bc_t6 = EquationBC(inner(u,v_tau)*ds+inner(u,v_n)*ds==0, u, (1,2), V=Z.sub(0))
 
 if uSpace == "Hdiv":
-	bc_noPenHdiv = DirichletBC(Z.sub(0), Constant((0.0,0.0)), (boundary_id_bot,boundary_id_top)) # because of the hdiv space setting 0 bc for it is only setting u cdot n = 0 #https://github.com/firedrakeproject/firedrake/issues/169#issuecomment-34557942
+	bc_noPenHdiv = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary") # because of the hdiv space setting 0 bc for it is only setting u cdot n = 0 #https://github.com/firedrakeproject/firedrake/issues/169#issuecomment-34557942
 	bcs.append(bc_noPenHdiv)
 elif uSpace == "Lag":
 	
@@ -441,8 +456,7 @@ elif uSpace == "Lag":
 problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
 
 
-nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True), Z.sub(2)])
-
+nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True,comm=comm), Z.sub(2)])
 
 
 
@@ -565,7 +579,7 @@ appctx = {"velocity_space": 0}
 solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
 #solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
-uptFile = File(dataFolder+"upt.pvd", comm = COMM_WORLD)
+uptFile = File(dataFolder+"upt.pvd", comm = comm)
 lastWrittenOutput = -1
 
 def projectAvgFree(f, fOutput):
@@ -629,6 +643,15 @@ tWorld = datetime.datetime.now()
 convergencewarningnumber = 0
 revertSolverAfterXsolves = -1
 
+def calcBdryL2(func):
+	return assemble(inner(func,func)*ds)
+	
+	
+def writeFactorError(fac, base):
+		error = calcBdryL2(fac*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+		#utils.print("temp\t",fac,"\t",error, "\t", (error/base))
+		utils.print("temp\t",fac,"\t", (error/base))
+
 while(t<tEnd):
 #	utils.print(revertSolverAfterXsolves)
 	if revertSolverAfterXsolves > -1:
@@ -669,15 +692,64 @@ while(t<tEnd):
 		
 		if round(t,12) >= round(lastWrittenOutput + writeOutputEvery,12):
 			writeMeshFunctions()
-		#utils.print("u\t",assemble(inner(u,u)*ds))	
-		#utils.print("u tau\t",assemble(inner(u,tau)*ds))	
-		utils.print("u n\t",assemble(inner(u,n)*inner(u,n)*ds))	
-		#utils.print("n Du tau\t",assemble(inner(dot(n,Du),tau)*ds))
-		utils.print("temp0.5\t",assemble(inner(0.5*alpha*u+dot(n,Du),tau)*inner(0.5*alpha*u+dot(n,Du),tau)*ds))
-		utils.print("temp1.0\t",assemble(inner(1.0*alpha*u+dot(n,Du),tau)*inner(1.0*alpha*u+dot(n,Du),tau)*ds))
-		utils.print("temp2.0\t",assemble(inner(2.0*alpha*u+dot(n,Du),tau)*inner(2.0*alpha*u+dot(n,Du),tau)*ds))
-	
+			
 		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
+		utils.print(" ")
+		utils.print("u n\t\t",calcBdryL2(dot(u,n)))
+		utils.print("u tau\t",calcBdryL2(dot(u,tau)))	
+		utils.print("n Du tau\t",calcBdryL2(dot(n,dot(tau,Du))))
+		
+#		utils.print("temp\t",factor,"\t",assemble(inner(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau),factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))*ds))
+		utils.print(" ")
+		base = 	calcBdryL2(dot(u,tau)) + calcBdryL2(dot(n,dot(tau,Du)))
+#		factor = 0.25
+		writeFactorError(0.25,base)
+		writeFactorError(0.50,base)
+		writeFactorError(0.75,base)
+		writeFactorError(0.90,base)
+		writeFactorError(1.00,base)
+		writeFactorError(1.10,base)
+		writeFactorError(1.25,base)
+		writeFactorError(1.50,base)
+		writeFactorError(1.75,base)
+		writeFactorError(2.00,base)
+		
+		# seems to converge to the nav slip for order to infty
+		# it should be the true solution if it solves the variational problem
+		# at least up to comp errors
+		# i guess/hope the var prob is more accurate then the derivative on the boundary
+
+		# u not completely divergence free (no baricentric mesh) -> also get an error from grad div u
+		
+		utils.print("div(u)\t",norm(div(u)))	
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 0.5
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 0.75
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 0.9
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 1.0
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 1.1
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 1.25
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 1.5
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+#		factor = 2.0
+#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+		utils.print(" ")
+		utils.print(" ")
 		tWorld = datetime.datetime.now()
 	
 utils.writeEndInfo()
