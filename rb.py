@@ -47,8 +47,6 @@ kappa = 1.0			# ... - kappa * Laplace theta ...
 Ra = 10.0**5			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
-ampFreqOffsetList = [[0.15,1.0,0]] # examples: [[0.1,1.0,0.0],[0.1,2.0,0.0]] or [[0.1,1.0,pi/2.0]]
-meshDiagonal = "crossed"			# "left"= /	"right"= \	crossed = "X"
 
 ### PARAMETERS END ###
 
@@ -77,7 +75,6 @@ utils.putInfoInInfoString("dt",dt)
 utils.putInfoInInfoString("Lx",Lx)
 utils.putInfoInInfoString("Ly",Ly)
 utils.putInfoInInfoString("tEnd",tEnd)
-#utils.putInfoInInfoString("alpha",alpha)
 utils.putInfoInInfoString("kappa",kappa)
 utils.putInfoInInfoString("Ra",Ra)
 utils.putInfoInInfoString("projectPoutputToAverageFree",projectPoutputToAverageFree)
@@ -85,54 +82,45 @@ utils.putInfoInInfoString("dataFolder",dataFolder)
 
 
 
+
 ### mesh ###
-mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = meshDiagonal)	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
+mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 boundary_id_bot = 1
 boundary_id_top = 2
 boundary_ids = (1,2)
 # change y variable
 Vc = mesh.coordinates.function_space()
 x, y = SpatialCoordinate(mesh)
-#for ampFreqOffset in ampFreqOffsetList:
-#	amp = ampFreqOffset[0]
-#	freq = ampFreqOffset[1]
-#	offset = ampFreqOffset[2]	
-#	y = y + amp * sin((2*pi*freq*x+offset)/Lx)
+# top
 ampTop = 0.02
 freqTop = 1
 freqSinTop = 3
 freqCosTop = 8
 offsetTop = 0.4*Lx
+# bot
 ampBot = ampTop
 freqBot = freqTop
 freqSinBot = freqSinTop
 freqCosBot = freqCosTop
 offsetBot = offsetTop+0.5*Lx
-
 # top
 y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*freqTop*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*freqTop*(x-offsetTop)/Lx))
 # bot
 y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*freqBot*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*freqBot*(x-offsetBot)/Lx))
-
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
-
 
 #mesh = Mesh('mesh.msh')
 
 
-#nPerCore = abs(sqrt(nx*ny/COMM_WORLD.size))
-nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super nice
+nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
 utils.print("sqrt(n^2 / core) ", nPerCore)
-
 
 utils.writeInfoFile()
 
 
 n = FacetNormal(mesh)
 tau = as_vector((-n[1],n[0]))
-x,y = SpatialCoordinate(mesh)
-
 
 if uSpace == "Hdiv":
 	V_u = FunctionSpace(mesh, "RT", order+1)
@@ -144,13 +132,9 @@ V_t = FunctionSpace(mesh, "CG", order)
 
 #alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
 alpha = 1.0
-
 #alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
 
-
-
 Z = V_u * V_p * V_t
-
 
 upt = Function(Z)
 vqs = TestFunction(Z)
@@ -158,13 +142,8 @@ upt.assign(0)
 u, p, theta = split(upt)
 v, q, s = split(vqs)
 
-
 uOld = Function(V_u)
 thetaOld = Function(V_t)
-
-
-
-
 
 nu = Constant(float(nu))
 kappa = Constant(float(kappa))
@@ -179,133 +158,13 @@ v_tau = dot(tau,v)*tau
 u_n = dot(n,u)*n
 u_tau = dot(tau,u)*tau
 
-#F_bsqBackward_navSlip = (
-#	inner(u-uOld,v)*dx
-#	+ dt*(
-#		inner(dot(u, nabla_grad(u)), v)*dx
-#		- inner(p,div(v))*dx
-#		+ 2.0 * inner(Du, Dv)*dx
-#		- Ra * inner(theta,v[1])*dx
-#		+ 2.0 * alpha * inner(u,v_tau)*ds
-#	)
-#	+ inner(theta-thetaOld,s)*dx
-#	+ dt*( 
-#		kappa * inner(grad(theta), grad(s))*dx
-#		+ inner(dot(u,grad(theta)),s)*dx
-#	)
-#	+ inner(div(u),q)*dx
-#)
-
-F_rb_backwards = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		inner(dot(u,nabla_grad(u)),v)*dx
-		- inner(p,div(v))*dx
-		+ nu * 2.0 * inner(Du, grad(v))*dx
-		- Ra * inner(theta,v[1])*dx
-		+ alpha * nu * 2.0 * inner(u,v)*ds
-	)
-	
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*(
-		inner(dot(u,grad(theta)),s)*dx
-		+ kappa * inner(grad(theta),grad(s))*dx
-#?!?!?!!?!	#- kappa * inner(dot(n,grad(theta)),s)*ds
-
-	)
-	
-	+ inner(u,grad(q))*dx
-)
-
-F_rb_backwards_noSlip = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		inner(dot(u,nabla_grad(u)),v)*dx
-		+ inner(grad(p),v)*dx
-		+ nu * inner(grad(u), grad(v))*dx
-		- Ra * inner(theta,v[1])*dx
-	)
-	
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*(
-		inner(dot(u,grad(theta)),s)*dx
-		+ kappa * inner(grad(theta),grad(s))*dx
-#?!?!?!!?!	#- kappa * inner(dot(n,grad(theta)),s)*ds
-
-	)
-	
-	+ inner(u,grad(q))*dx
-)
-
-
-F_rb_crankNicolson_noSlip = (
-	1.0/Pr * inner(u-uOld,v)*dx
-	+ dt*(
-		1.0/Pr * 1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))*dx
-		+ inner(grad(p),v)*dx
-		+ nu * 1.0/2.0*(inner(grad(u), grad(v))+inner(grad(uOld), grad(v)))*dx
-		- Ra * 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/2.0*(inner(dot(u,grad(theta)),s)+inner(dot(uOld,grad(thetaOld)),s))*dx
-		+ kappa * 1.0/2.0*(inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))*dx
-#?!?!?!!?!	#- kappa * 1.0/2.0*(inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds
-	)
-	+ inner(u,grad(q))*dx
-)
-
-
 
 # u_t + u cdot nabla u + nabla p - sqrt(Pr/Ra) Delta u = theta e_2
 # theta_t + u cdot nabla theta - 1/sqrt(Pr*Ra) Delta theta = 0
+# Padberg-Gehle reformulation -> automatic free fall time
 # seems to yield any improvement over the other method (except automatic rescaling of time)
 # doesn't converge for Ra 10^8 and n = 128 after some time
-F_rb_PadbergGehle_backwards_noSlip = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		inner(dot(u,nabla_grad(u)),v)*dx
-		+ inner(grad(p),v)*dx
-		+ sqrt(Pr/Ra) * inner(grad(u), grad(v))*dx
-		- inner(theta,v[1])*dx
-	)
-	
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*(
-		inner(dot(u,grad(theta)),s)*dx
-		+ 1.0/(sqrt(Pr*Ra)) * inner(grad(theta),grad(s))*dx
-#?!?!?!!?!	#- kappa * inner(dot(n,grad(theta)),s)*ds
 
-	)
-	
-	+ inner(u,grad(q))*dx
-)
-
-
-
-
-
-# - int Delta u v = int_{\partial\Omega} (2alpha+kappa) u v + \langle nabla u, nabla v \rangle -> kappa=0 because of grid?!
-F_test = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		inner(dot(u,nabla_grad(u)),v)*dx
-		- inner(p,div(v))*dx
-		+ nu * inner(grad(u), grad(v))*dx
-		- Ra * inner(theta,v[1])*dx
-		+ alpha * nu * 2.0 * inner(u,v)*ds
-	)
-	
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*(
-		inner(dot(u,grad(theta)),s)*dx
-		+ kappa * inner(grad(theta),grad(s))*dx
-#?!?!?!!?!	#- kappa * inner(dot(n,grad(theta)),s)*ds
-
-	)
-	
-	+ inner(u,grad(q))*dx
-)
 
 
 F_crankNicolson_freeFall = (
@@ -326,27 +185,6 @@ F_crankNicolson_freeFall = (
 )
 
 #https://gmd.copernicus.org/preprints/gmd-2021-367/gmd-2021-367.pdf
-
-
-
-
-F_crankNicolson_org_NavSlip_hDiv = (
-	1.0/Pr *inner(u-uOld,v)*dx
-	+ dt*(
-		1.0/(2.0*Pr) * inner(dot(u, nabla_grad(u))+dot(uOld, nabla_grad(uOld)), v)*dx
-		+ nu * inner(Du+DuOld, Dv)*dx
-		+ nu * alpha * inner(u+uOld,v)*ds
-		- Ra * 1.0/2.0 * inner(theta+thetaOld,v[1])*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/2.0 * inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
-		+ 1.0/2.0 * kappa * inner(grad(theta+thetaOld), grad(s))*dx
-		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
-	)
-	+ inner(u,grad(q))*dx
-	+ inner(grad(p),v)*dx
-)
 
 
 F_crankNicolson_freeFall_NavSlip_hDiv = (
@@ -432,130 +270,18 @@ u_n = dot(u,n)
 v_n = dot(v,n)
 
 
-#bc_u = EquationBC(inner(dot(n,Du) - alpha*u,v_tau)*ds+inner(u,v_n)*ds==0, u, (1,2), V=Z.sub(0))
-#bc_uN = EquationBC(inner(dot(u,n),dot(v,n))*ds==0, u, (1,2), V=Z.sub(0))
-#bc_uTau = EquationBC(inner(u,v_tau)*ds==0, u, (1,2), V=Z.sub(0))
-#bc_uNav = EquationBC(inner(dot(Du,n)-alpha*u,v)*ds==0, u, (1,2), V=Z.sub(0), bcs=bc_uN)
-#navSlipBc = EquationBC(inner(dot(n,Du)+alpha*u,v_tau)*ds+inner(u,v_n)*ds==0, u, "on_boundary", V=Z.sub(0))
-
-
-#bc_t1 = EquationBC(inner(u+0.00005*dot(n,Du),v_tau)*ds+inner(u,v_n)*ds==0, u, (1,2), V=Z.sub(0))
-#bc_un0 = EquationBC(inner(dot(u,n),dot(v,n))*ds==0, u, (1,2), V=Z.sub(0))
-#bc_t3 = EquationBC(inner(dot(dot(grad(u)+nabla_grad(u),n)+alpha*u,tau),dot(v,tau))*ds==0, u, (1,2), V=Z.sub(0), bcs=bc_un0)
-#bc_t4 = EquationBC(inner(u,v)*ds==0, u, (1,2), V=Z.sub(0))
-#bc_utau0 = EquationBC(inner(u,v_tau)*ds==0, u, (1,2), V=Z.sub(0))
-#bc_t6 = EquationBC(inner(u,v_tau)*ds+inner(u,v_n)*ds==0, u, (1,2), V=Z.sub(0))
-
 if uSpace == "Hdiv":
 	bc_noPenHdiv = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary") # because of the hdiv space setting 0 bc for it is only setting u cdot n = 0 #https://github.com/firedrakeproject/firedrake/issues/169#issuecomment-34557942
 	bcs.append(bc_noPenHdiv)
 elif uSpace == "Lag":
-	
-#	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), (boundary_id_bot,boundary_id_top))
 	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary")
 	#bcs.append(bcs_noSlip)
-	
-	
-	#bc_uN = EquationBC(inner(dot(u,n),dot(v,n))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0))
-	#bc_uN_nav = EquationBC(inner(dot(tau,dot(Du,n))+alpha*dot(u,tau),dot(v,tau))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0), bcs=bc_uN)
-	#bc_uN_nav = EquationBC(inner(dot(tau,dot(Du,n))+alpha*dot(u,tau),dot(v,tau))*ds+inner(dot(u,n),dot(v,n))*ds==0, u, (boundary_id_bot,boundary_id_top), V=Z.sub(0))
-	#bcs.append(bc_uN_nav)
-	
-
 	
 
 problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
 
 
 nullspace = MixedVectorSpaceBasis(Z, [Z.sub(0), VectorSpaceBasis(constant=True,comm=comm), Z.sub(2)])
-
-
-
-parameters_easySplit = {	# splits the solving of the nse and the temperature equation and nothing else
-	# seems to be more robust but is super slow on big grids
-	"pc_type": "fieldsplit",
-	"pc_fieldsplit_type": "multiplicative",		# additive multiplicative symmetric_multiplicative special schur gkb
-	"pc_fieldsplit_0_fields": "0,1",
-	"pc_fieldsplit_1_fields": "2",
-#	           'snes_monitor': None,
-#                   'snes_view': None,
-#                   'ksp_monitor_true_residual': None,
-#                   'snes_converged_reason': None,
-#                   'ksp_converged_reason': None
-}
-
-
-parameters_demo_2 = {	# see also https://arxiv.org/pdf/1706.01346.pdf
-	"mat_type": "matfree",
-	"snes_monitor": None,
-	"ksp_type": "fgmres",
-	"ksp_gmres_modifiedgramschmidt": True,
-	"pc_type": "fieldsplit",
-	"pc_fieldsplit_type": "multiplicative",
-	"pc_fieldsplit_0_fields": "0,1",
-	"pc_fieldsplit_1_fields": "2",
-	"fieldsplit_0": {
-		"ksp_type": "gmres",
-		"ksp_gmres_modifiedgramschmidt": True,
-		"ksp_rtol": 1e-2,
-		"pc_type": "fieldsplit",
-		"pc_fieldsplit_type": "schur",
-		"pc_fieldsplit_schur_fact_type": "lower",
-
-		"fieldsplit_0": {
-			"ksp_type": "preonly",
-			"pc_type": "python",
-			"pc_python_type": "firedrake.AssembledPC",
-			"assembled_pc_type": "hypre"
-		},
-
-		"fieldsplit_1": {
-			"ksp_type": "preonly",
-			"pc_type": "python",
-			"pc_python_type": "firedrake.PCDPC",
-			"pcd_Mp_ksp_type": "preonly",
-			"pcd_Mp_pc_type": "ilu",
-			"pcd_Kp_ksp_type": "preonly",
-			"pcd_Kp_pc_type": "hypre",
-			"pcd_Fp_mat_type": "aij"
-		}
-	},
-	"fieldsplit_1": {
-		"ksp_type": "gmres",
-		"ksp_rtol": "1e-4",
-		"pc_type": "python",
-		"pc_python_type": "firedrake.AssembledPC",
-		"assembled_pc_type": "hypre"
-	}
-}
-
-
-
-parameters_demo_1 = {
-	"mat_type": "matfree",
-	"snes_monitor": None,
-	
-	"ksp_type": "gmres",
-	"pc_type": "fieldsplit",
-	"pc_fieldsplit_type": "multiplicative",
-	"pc_fieldsplit_0_fields": "0,1",
-	"pc_fieldsplit_1_fields": "2",
-
-	"fieldsplit_0": {
-		"ksp_type": "preonly",
-		"pc_type": "python",
-		"pc_python_type": "firedrake.AssembledPC",
-		"assembled_pc_type": "lu",
-		"assembled_pc_factor_mat_solver_type": "mumps"
-		},
-
-	"fieldsplit_1": {
-		"ksp_type": "preonly",
-		"pc_type": "python",
-		"pc_python_type": "firedrake.AssembledPC",
-		"assembled_pc_type": "lu"
-	}
-}
 
 parameters_my = {
 	"mat_type": "matfree",
@@ -585,8 +311,8 @@ parameters_my = {
 		"assembled_pc_type": "lu",
 	}
 }
-
 appctx = {"velocity_space": 0}
+
 solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
 #solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
