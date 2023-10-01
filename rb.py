@@ -17,7 +17,7 @@ utils.generateRecoveryScript(__file__)
 
 
 ### PARAMETERS ###
-nXY = 32
+nXY = 64
 order = 1
 
 nOut = nXY
@@ -44,7 +44,7 @@ tEnd = 10000 #1.0
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**4			# ... + Ra * theta * e_2
+Ra = 10.0**5			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 ampFreqOffsetList = [[0.15,1.0,0]] # examples: [[0.1,1.0,0.0],[0.1,2.0,0.0]] or [[0.1,1.0,pi/2.0]]
@@ -98,12 +98,22 @@ x, y = SpatialCoordinate(mesh)
 #	freq = ampFreqOffset[1]
 #	offset = ampFreqOffset[2]	
 #	y = y + amp * sin((2*pi*freq*x+offset)/Lx)
-amp = 0.1#0.02
-freq = 1
-freqSin = 0#3
-freqCos = 0#8
-offset = 0.4*Lx
-y = y + amp * sin(2*pi*freq*(x-offset)/Lx+freqSin*sin(2*pi*freq*(x-offset)/Lx)+freqCos*cos(2*pi*freq*(x-offset)/Lx))
+ampTop = 0.02
+freqTop = 1
+freqSinTop = 3
+freqCosTop = 8
+offsetTop = 0.4*Lx
+ampBot = ampTop
+freqBot = freqTop
+freqSinBot = freqSinTop
+freqCosBot = freqCosTop
+offsetBot = offsetTop+0.5*Lx
+
+# top
+y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*freqTop*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*freqTop*(x-offsetTop)/Lx))
+# bot
+y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*freqBot*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*freqBot*(x-offsetBot)/Lx))
+
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
 
@@ -132,9 +142,10 @@ V_p = FunctionSpace(mesh, "CG", order)
 V_t = FunctionSpace(mesh, "CG", order)
 
 
-alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
+#alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
+alpha = 1.0
 
-alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
+#alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
 
 
 
@@ -652,19 +663,18 @@ def writeFactorError(fac, base):
 		#utils.print("temp\t",fac,"\t",error, "\t", (error/base))
 		utils.print("temp\t",fac,"\t", (error/base))
 
+solverParams = 0		# (my) fast ones 0, firedrake default 1
+
 while(t<tEnd):
-#	utils.print(revertSolverAfterXsolves)
-	if revertSolverAfterXsolves > -1:
-		if revertSolverAfterXsolves == 0:
-			solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
-			utils.print("reverting to my parameters")
-		revertSolverAfterXsolves += -1
 	try:
-#		utils.print(solver.parameters)
+		utils.print(solver.parameters)
 		solver.solve()
 	except ConvergenceError as convError:
 		utils.print(convError)
 		if "DIVERGED_LINEAR_SOLVE" in str(convError):
+			if solverParams == 1:
+				raise Exception("Diverged with both solverParams") # Don't! If you catch, likely to hide bugs.
+			solverParams = 1
 			revertSolverAfterXsolves = 1
 			utils.print("DIVERGED_LINEAR_SOLVE, trying again with different solver parameters")
 			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
@@ -677,9 +687,14 @@ while(t<tEnd):
 #			u.assign(1.0/11.0*(10*uOld + uOld2))
 #			theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
 			convergencewarningnumber += 1
-			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t) + ": trying again with slightly changed data (weighted average over last steps)")
+			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
 			utils.writeInfoFile()
+		else:
+			utils.print("error in solve")
+			raise Exception("convergence error")
+			
 	else:
+			
 		t = t + dt
 		utils.setSimulationTime(t)
 		u, p, theta = upt.subfunctions	# depending on the firedrake version have to either use upt.split() (old) or upt.subfunctions (newer)
@@ -694,6 +709,8 @@ while(t<tEnd):
 			writeMeshFunctions()
 			
 		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
+		utils.print(" ")
+		utils.print("div(u)\t",norm(div(u)))	
 		utils.print(" ")
 		utils.print("u n\t\t",calcBdryL2(dot(u,n)))
 		utils.print("u tau\t",calcBdryL2(dot(u,tau)))	
@@ -718,38 +735,16 @@ while(t<tEnd):
 		# it should be the true solution if it solves the variational problem
 		# at least up to comp errors
 		# i guess/hope the var prob is more accurate then the derivative on the boundary
-
-		# u not completely divergence free (no baricentric mesh) -> also get an error from grad div u
 		
-		utils.print("div(u)\t",norm(div(u)))	
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 0.5
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 0.75
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 0.9
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 1.0
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 1.1
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 1.25
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 1.5
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
-#		factor = 2.0
-#		error = calcBdryL2(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))
-#		utils.print("temp\t",factor,"\t",error, "\t", (error/base))
+		
 		utils.print(" ")
 		utils.print(" ")
 		tWorld = datetime.datetime.now()
+		
+		
+		if solverParams == 1:
+			utils.print("reverting to my parameters")
+			solverParams = 0
+			solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
 	
 utils.writeEndInfo()
