@@ -62,7 +62,7 @@ def showArray(source, functionname, view, scaleMin, scaleMax):
     display.RescaleTransferFunctionToDataRange(True, False)
 
     # show color bar/color legend
-    display.SetScalarBarVisibility(view, True)
+    display.SetScalarBarVisibility(view, False)
 
     # get color transfer function/color map for 'theta'
     thetaLUT = GetColorTransferFunction(functionname)
