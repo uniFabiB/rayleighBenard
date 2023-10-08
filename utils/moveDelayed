@@ -1,0 +1,12 @@
+#!/bin/sh
+MONITORDIR="./a/"
+TARGETDIR="$(pwd)"  # "$(pwd)" is working direcotry
+DELAYSECS=5
+inotifywait -m -r -e create "${MONITORDIR}" | while read PATH ACTION FILE
+do
+  echo "${ACTION} of file ${FILE} in ${PATH}"
+	FILEPATH="${PATH}${FILE}"
+	/bin/sleep ${DELAYSECS}
+	echo "moving ${FILEPATH} to ${TARGETDIR}"
+  /bin/mv "${FILEPATH}" "${TARGETDIR}"
+done
