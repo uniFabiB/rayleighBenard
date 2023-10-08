@@ -17,12 +17,12 @@ utils.generateRecoveryScript(__file__)
 
 
 ### PARAMETERS ###
-nXY = 64
+nXY = 128
 order = 1
 
 nOut = nXY
 
-uSpace = "Hdiv"			# either Hdiv or Lag
+uSpace = "Lag"			# either Hdiv or Lag
 
 #dt = 0.0001
 dt = 0.1
@@ -44,7 +44,7 @@ tEnd = 10000 #1.0
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**5			# ... + Ra * theta * e_2
+Ra = 10.0**9			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -130,9 +130,15 @@ V_p = FunctionSpace(mesh, "CG", order)
 V_t = FunctionSpace(mesh, "CG", order)
 
 
+
+
 #alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
-alpha = 1.0
+alpha = 10.0**12
 #alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
+
+
+
+
 
 Z = V_u * V_p * V_t
 
@@ -192,14 +198,14 @@ F_crankNicolson_freeFall_NavSlip_hDiv = (
 	+ dt*(
 		1.0/2.0*inner(dot(u, nabla_grad(u)) + dot(uOld, nabla_grad(uOld)), v)*dx
 		+ sqrt(Pr/Ra) * nu * inner(Du + DuOld, Dv)*dx
-		+ sqrt(Pr/Ra) * nu * inner(u + uOld,alpha * v)*ds
+		+ sqrt(Pr/Ra) * nu * inner(alpha * (u + uOld),v)*ds
 		- 1.0/2.0*inner(theta+thetaOld,v[1])*dx
 	)
 	+ inner(theta-thetaOld,s)*dx
 	+ dt*( 
 		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
 		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
-		#- inner(dot(n,grad(theta+thetaOld)),s)*ds term?!?!?!?!?!?!?!
+		- inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
 	)
 	+ inner(u,grad(q))*dx
 	+ inner(grad(p),v)*dx
@@ -220,7 +226,7 @@ F_back_freeFall_NavSlip_hDiv = (
 	+ dt*( 
 		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
 		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s)))*dx
-		#- inner(dot(n,grad(theta)),s)*ds term?!?!?!?!?!?!?!
+		- inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
 	)
 	+ inner(u,grad(q))*dx
 	+ inner(grad(p),v)*dx
@@ -275,7 +281,7 @@ if uSpace == "Hdiv":
 	bcs.append(bc_noPenHdiv)
 elif uSpace == "Lag":
 	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary")
-	#bcs.append(bcs_noSlip)
+	bcs.append(bcs_noSlip)
 	
 
 problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
@@ -378,7 +384,6 @@ thetaOld2 = theta
 tWorld = datetime.datetime.now()
 
 convergencewarningnumber = 0
-revertSolverAfterXsolves = -1
 
 def calcBdryL2(func):
 	return assemble(inner(func,func)*ds)
@@ -393,7 +398,7 @@ solverParams = 0		# (my) fast ones 0, firedrake default 1
 
 while(t<tEnd):
 	try:
-		utils.print(solver.parameters)
+		#utils.print(solver.parameters)
 		solver.solve()
 	except ConvergenceError as convError:
 		utils.print(convError)
@@ -401,7 +406,6 @@ while(t<tEnd):
 			if solverParams == 1:
 				raise Exception("Diverged with both solverParams") # Don't! If you catch, likely to hide bugs.
 			solverParams = 1
-			revertSolverAfterXsolves = 1
 			utils.print("DIVERGED_LINEAR_SOLVE, trying again with different solver parameters")
 			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 			# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
@@ -441,20 +445,21 @@ while(t<tEnd):
 		utils.print("u n\t\t",calcBdryL2(dot(u,n)))
 		utils.print("u tau\t",calcBdryL2(dot(u,tau)))	
 		utils.print("n Du tau\t",calcBdryL2(dot(n,dot(tau,Du))))
+		utils.print("n grad theta\t",calcBdryL2(dot(n,grad(theta))))
 		
 #		utils.print("temp\t",factor,"\t",assemble(inner(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau),factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))*ds))
 		utils.print(" ")
 		base = 	calcBdryL2(dot(u,tau)) + calcBdryL2(dot(n,dot(tau,Du)))
 #		factor = 0.25
-		writeFactorError(0.25,base)
+		#writeFactorError(0.25,base)
 		writeFactorError(0.50,base)
-		writeFactorError(0.75,base)
+		#writeFactorError(0.75,base)
 		writeFactorError(0.90,base)
 		writeFactorError(1.00,base)
 		writeFactorError(1.10,base)
-		writeFactorError(1.25,base)
-		writeFactorError(1.50,base)
-		writeFactorError(1.75,base)
+		#writeFactorError(1.25,base)
+		#writeFactorError(1.50,base)
+		#writeFactorError(1.75,base)
 		writeFactorError(2.00,base)
 		
 		# seems to converge to the nav slip for order to infty
