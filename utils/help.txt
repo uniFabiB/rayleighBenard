@@ -1,8 +1,8 @@
 https://itwiki.math.uni-hamburg.de/doku.php/de:user:server
 ssh command
-	ssh bxxXXXX@compu4.math.uni-hamburg.de
+	ssh -K bxxXXXX@compu4.math.uni-hamburg.de
 		24 cores
-	ssh bxxXXXX@compu5.math.uni-hamburg.de
+	ssh -K bxxXXXX@compu5.math.uni-hamburg.de
 		64 cores
 		htop installed
 
