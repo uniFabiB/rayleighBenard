@@ -6,7 +6,10 @@ from firedrake import *
 import datetime
 import weakref
 
+import argparse
+
 outputFolder = "output/"
+checkpointFolder = outputFolder+"checkpoints/"
 
 my_ensemble = Ensemble(COMM_WORLD, COMM_WORLD.size)
 comm = my_ensemble.comm
@@ -16,8 +19,12 @@ utils.generateRecoveryScript(__file__)
 
 
 
+argParser = argparse.ArgumentParser()
+argParser.add_argument("-l", "--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint.h5 100)", nargs=2)
+args = argParser.parse_args()
+
 ### PARAMETERS ###
-nXY = 128
+nXY = 32
 order = 1
 
 nOut = nXY
@@ -27,8 +34,9 @@ uSpace = "Lag"			# either Hdiv or Lag
 #dt = 0.0001
 dt = 0.1
 writeOutputEveryXsteps = 1
-writeOutputEvery = dt*writeOutputEveryXsteps			# write mesh functions
 writeUP = True						# output u and p? False True
+
+writeCheckpointEveryXsteps = 5
 
 
 
@@ -44,7 +52,7 @@ tEnd = 10000 #1.0
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**9			# ... + Ra * theta * e_2
+Ra = 10.0**6			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -79,12 +87,13 @@ utils.putInfoInInfoString("kappa",kappa)
 utils.putInfoInInfoString("Ra",Ra)
 utils.putInfoInInfoString("projectPoutputToAverageFree",projectPoutputToAverageFree)
 utils.putInfoInInfoString("dataFolder",dataFolder)
+utils.putInfoInInfoString("args",args)
 
 
 
 
 ### mesh ###
-mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
+mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed", name="myMesh")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 boundary_id_bot = 1
 boundary_id_top = 2
 boundary_ids = (1,2)
@@ -110,13 +119,21 @@ y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*p
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
 
+nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
+utils.print("sqrt(n^2 / core) ", nPerCore)
 #mesh = Mesh('mesh.msh')
 
 
-nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
-utils.print("sqrt(n^2 / core) ", nPerCore)
+if args.load:
+	with CheckpointFile("checkpoint_mesh.h5", 'r') as meshInFile:
+		mesh = meshInFile.load_mesh("myMesh")
+
+with CheckpointFile(checkpointFolder + "checkpoint_mesh.h5", 'w') as meshOutFile:
+	utils.print("writing mesh checkpoint file")
+	meshOutFile.save_mesh(mesh)
 
 utils.writeInfoFile()
+
 
 
 n = FacetNormal(mesh)
@@ -142,11 +159,12 @@ alpha = 10.0**12
 
 Z = V_u * V_p * V_t
 
-upt = Function(Z)
+upt = Function(Z, name="upt")
 vqs = TestFunction(Z)
 upt.assign(0)
 u, p, theta = split(upt)
 v, q, s = split(vqs)
+
 
 uOld = Function(V_u)
 thetaOld = Function(V_t)
@@ -164,6 +182,20 @@ v_tau = dot(tau,v)*tau
 u_n = dot(n,u)*n
 u_tau = dot(tau,u)*tau
 
+
+def createCheckpoint():
+	global lastWrittenCheckpoint
+	utils.print("creating checkpoint at step " + str(step))
+	with CheckpointFile(checkpointFolder + "checkpoint_"+ str(step) + ".h5", 'w') as outFile:
+		u.rename("u")
+		outFile.save_function(u, idx = step)
+		theta.rename("theta")
+		outFile.save_function(theta, idx = step)
+	lastWrittenCheckpoint = step
+
+	
+	
+	
 
 # u_t + u cdot nabla u + nabla p - sqrt(Pr/Ra) Delta u = theta e_2
 # theta_t + u cdot nabla theta - 1/sqrt(Pr*Ra) Delta theta = 0
@@ -238,7 +270,6 @@ F = F_crankNicolson_freeFall_NavSlip_hDiv
 
 # initial conditions for u
 u = project(Constant([0.0,0.0]), V_u)
-uOld.assign(u)
 
 x, y = SpatialCoordinate(mesh)
 #icTheta = 0.5*sin(2*pi*x/Lx)*exp(-4*(0.5-y)**2)+0.5
@@ -262,6 +293,18 @@ expFactor = 0.5
 icTheta = Constant(0.5)
 theta = project(icTheta, V_t)
 
+step = 0
+
+if args.load:
+	filename = args.load[0]
+	step = int(args.load[1])
+	utils.print("loading step " + str(step) + " from file " + filename)
+	with CheckpointFile(filename, 'r') as inFile:
+		u = inFile.load_function(mesh, "u", idx = step)
+		theta = inFile.load_function(mesh, "theta", idx = step)
+t = step*dt
+
+uOld.assign(u)
 thetaOld.assign(theta)
 
 bcs = []
@@ -323,7 +366,8 @@ solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_param
 #solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
 uptFile = File(dataFolder+"upt.pvd", comm = comm)
-lastWrittenOutput = -1
+lastWrittenOutput = step
+lastWrittenCheckpoint = step
 
 def projectAvgFree(f, fOutput):
 	avgF = 1/(Lx*Ly)*assemble(f*dx)
@@ -378,9 +422,6 @@ COMM_WORLD.Barrier()
 utils.print("starting to solve")
 
 
-uOld2 = u
-thetaOld2 = theta
-
 tWorld = datetime.datetime.now()
 
 convergencewarningnumber = 0
@@ -396,7 +437,9 @@ def writeFactorError(fac, base):
 
 solverParams = 0		# (my) fast ones 0, firedrake default 1
 
-while(t<tEnd):
+checkPointIndex = 0
+
+while(dt*step<=tEnd):
 	try:
 		#utils.print(solver.parameters)
 		solver.solve()
@@ -409,13 +452,11 @@ while(t<tEnd):
 			utils.print("DIVERGED_LINEAR_SOLVE, trying again with different solver parameters")
 			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 			# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
-			# "solution" for now change the data a bit and try again		
+			# old "solution" for now change the data a bit and try again -> new solution change preconditioner
 
 			# TRY ANOTHER PRECONDITIONER AT ERROR!!!
 			# CHECK IF IT IS THE RIGHT ERROR FIRST
 			# PRINT ERROR STACK ANYWAYS
-#			u.assign(1.0/11.0*(10*uOld + uOld2))
-#			theta.assign(1.0/11.0*(10*thetaOld + thetaOld2))
 			convergencewarningnumber += 1
 			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
 			utils.writeInfoFile()
@@ -424,19 +465,20 @@ while(t<tEnd):
 			raise Exception("convergence error")
 			
 	else:
-			
-		t = t + dt
+		step += 1
+		t = step*dt
 		utils.setSimulationTime(t)
 		u, p, theta = upt.subfunctions	# depending on the firedrake version have to either use upt.split() (old) or upt.subfunctions (newer)
 		
-		uOld2.assign(uOld)
-		thetaOld2.assign(thetaOld)
 		
 		uOld.assign(u)
 		thetaOld.assign(theta)
 		
-		if round(t,12) >= round(lastWrittenOutput + writeOutputEvery,12):
+		if step >= lastWrittenOutput + writeOutputEveryXsteps:
 			writeMeshFunctions()
+			
+		if step >= lastWrittenCheckpoint + writeCheckpointEveryXsteps:
+			createCheckpoint()
 			
 		utils.print(round(t/tEnd*100,9),"% done (after",datetime.datetime.now()-tWorld,"), t=",round(t,9))
 		utils.print(" ")
