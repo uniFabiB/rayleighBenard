@@ -9,7 +9,6 @@ import weakref
 import argparse
 
 outputFolder = "output/"
-checkpointFolder = outputFolder+"checkpoints/"
 
 my_ensemble = Ensemble(COMM_WORLD, COMM_WORLD.size)
 comm = my_ensemble.comm
