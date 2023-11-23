@@ -49,6 +49,7 @@ class utils:
 		self.putInfoInInfoString("startTime", self.startTime)
 		self.generateSimulationId(self.startTime)
 		self.checkIfFolderExists(outputFolder)
+		self.checkIfFolderExists(outputFolder + "checkpoints/")
 		self.deletePreviousInfoFileContent()
 		self.putInfoInInfoString("outputFolder", outputFolder)
 		self.putInfoInInfoString("ensembleSize", ensembleSize)
