@@ -4,7 +4,7 @@ TARGETDIR="$(pwd)/result/"  # "$(pwd)" is working direcotry
 CHECKSECS=1
 DELAYSECS=3
 oldFiles="old"
-extension=".txt"
+extension=".vtu"
 
 MONITORDIRORG=$MONITORDIR
 #MONITORDIR=${MONITORDIR// /"\ "}
