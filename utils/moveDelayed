@@ -4,11 +4,9 @@ TARGETDIR="$(pwd)/data/"  # "$(pwd)" is working direcotry
 CHECKSECS=1
 DELAYSECS=20
 oldFiles="old"
-extensions=( ".vtu" ".pvtu" )
+moveExtensions=( ".vtu" ".pvtu" )
+copyExtensions=( ".pvd" )
 
-MONITORDIRORG=$MONITORDIR
-#MONITORDIR=${MONITORDIR// /"\ "}
-#TARGETDIR=${TARGETDIR// /"\ "}
 
 
 moveDelayed () {
@@ -18,6 +16,13 @@ moveDelayed () {
 	/bin/mv "${FILEPATH}" "${TARGETDIR}"
 }
 
+
+copyFile () {
+	FILEPATH="${MONITORDIR}/$1"
+	echo "copying ${FILEPATH} to ${TARGETDIR}"
+	/bin/cp "${FILEPATH}" "${TARGETDIR}"
+}
+
 #inotifywait -m -r -e create "${MONITORDIR}" | while read PATH ACTION FILE
 
 while :
@@ -25,31 +30,47 @@ do
  	allFilesNow=$(ls "$MONITORDIR")
  	if [ "$allFilesNow" != "$allFilesPrev" ]
 	then
-#		echo $allFilesNow
-		#echo $allFilesPrev
-#		diff  <(echo "$allFilesPrev" ) <(echo "$allFilesNow")
 		newFiles=$(comm -23 <(echo "$allFilesNow" | sort) <(echo "$allFilesPrev" | sort))
 		files=( $newFiles )
+		
+		### files to move
 		for file in "${files[@]}"; do
 			extensionCorrect="false"
-			for extension in "${extensions[@]}"; do
+			for extension in "${moveExtensions[@]}"; do
 				if [[ $file == *"$extension" ]]
 				then
 					extensionCorrect="true"
 				fi
 			done
-#			echo "$file"
-#			echo "$extensionCorrect"
-			if [[ $extensionCorrect == *"true" ]]
+			if [[ $extensionCorrect == "true" ]]
 			then			
 				echo -n "$file "
 				moveDelayed "$file" &
 			fi
-		done 
+			
+		done
+		
+		
+		### files to copy
+		allFiles=( $allFilesNow )
+		for file in "${allFiles[@]}"; do
+			extensionCorrect="false"
+			for extension in "${copyExtensions[@]}"; do
+				if [[ $file == *"$extension" ]]
+				then
+					extensionCorrect="true"
+				fi
+			done
+			if [[ $extensionCorrect == "true" ]]
+			then			
+				#echo -n "$file "
+				copyFile "$file" &
+			fi
+		done
+		
 	else
 		echo -n "."
 	fi
 	allFilesPrev="$allFilesNow"
-#	FILEPATH="${PATH}${FILE}"
 	/bin/sleep ${CHECKSECS}
 done
