@@ -1,4 +1,5 @@
 #!/bin/sh
+# require package inotify-tools 
 MONITORDIR="./a/"
 TARGETDIR="$(pwd)"  # "$(pwd)" is working direcotry
 DELAYSECS=5
