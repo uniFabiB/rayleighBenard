@@ -1,8 +1,14 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 
+
 import myUtilities
 from firedrake import *
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)		# ignores deprecation warning since firedrake is not updated and the terminal is spammed by 
+										#DeprecationWarning: Expr.ufl_domain() is deprecated, please use extract_unique_domain(expr) instead.
+										#  warnings.warn("Expr.ufl_domain() is deprecated, please 
 import datetime
 import weakref
 
@@ -19,23 +25,23 @@ utils.generateRecoveryScript(__file__)
 
 
 argParser = argparse.ArgumentParser()
-argParser.add_argument("-l", "--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint.h5 100)", nargs=2)
+argParser.add_argument("--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint 100, this will load checkpoint_mesh.h5 and checkpoint_100.h5)", nargs=2)
 args = argParser.parse_args()
 
 ### PARAMETERS ###
-nXY = 32
+nXY = 128
 order = 1
 
 nOut = nXY
 
-uSpace = "Lag"			# either Hdiv or Lag
+uSpace = "Hdiv"			# either Hdiv or Lag
 
 #dt = 0.0001
 dt = 0.1
 writeOutputEveryXsteps = 1
 writeUP = True						# output u and p? False True
 
-writeCheckpointEveryXsteps = 5
+writeCheckpointEveryXsteps = 25
 
 
 
@@ -46,12 +52,12 @@ t = 0.0
 tEnd = 10000 #1.0
 
 ### only nav slip ###
-#alpha = 1.0		# alpha in tau Du n + alpha tau u = 0
+alpha = 10.0**0			# alpha in tau Du n + alpha tau u = 0
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**6			# ... + Ra * theta * e_2
+Ra = 10.0**5			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -124,10 +130,10 @@ utils.print("sqrt(n^2 / core) ", nPerCore)
 
 
 if args.load:
-	with CheckpointFile("checkpoint_mesh.h5", 'r') as meshInFile:
+	with CheckpointFile(args.load[0] + "_mesh.h5", 'r') as meshInFile:
 		mesh = meshInFile.load_mesh("myMesh")
 
-with CheckpointFile(checkpointFolder + "checkpoint_mesh.h5", 'w') as meshOutFile:
+with CheckpointFile(outputFolder + "checkpoints/" + "checkpoint_mesh.h5", 'w') as meshOutFile:
 	utils.print("writing mesh checkpoint file")
 	meshOutFile.save_mesh(mesh)
 
@@ -149,7 +155,6 @@ V_t = FunctionSpace(mesh, "CG", order)
 
 
 #alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
-alpha = 10.0**12
 #alphaFile = File(dataFolder+"alpha.pvd", comm = comm).write(alpha)
 
 
@@ -185,11 +190,11 @@ u_tau = dot(tau,u)*tau
 def createCheckpoint():
 	global lastWrittenCheckpoint
 	utils.print("creating checkpoint at step " + str(step))
-	with CheckpointFile(checkpointFolder + "checkpoint_"+ str(step) + ".h5", 'w') as outFile:
+	with CheckpointFile(outputFolder + "checkpoints/" + "checkpoint_"+ str(step) + ".h5", 'w') as outFile:
 		u.rename("u")
-		outFile.save_function(u, idx = step)
+		outFile.save_function(u)
 		theta.rename("theta")
-		outFile.save_function(theta, idx = step)
+		outFile.save_function(theta)
 	lastWrittenCheckpoint = step
 
 	
@@ -297,10 +302,10 @@ step = 0
 if args.load:
 	filename = args.load[0]
 	step = int(args.load[1])
-	utils.print("loading step " + str(step) + " from file " + filename)
-	with CheckpointFile(filename, 'r') as inFile:
-		u = inFile.load_function(mesh, "u", idx = step)
-		theta = inFile.load_function(mesh, "theta", idx = step)
+	utils.print("loading step " + str(step) + " from file " + filename + "_" + str(step) + ".h5")
+	with CheckpointFile(filename + "_" + str(step) + ".h5", 'r') as inFile:
+		u = inFile.load_function(mesh, "u")
+		theta = inFile.load_function(mesh, "theta")
 t = step*dt
 
 uOld.assign(u)
