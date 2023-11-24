@@ -111,7 +111,7 @@ for i in range(n):
     renderView.InteractionMode = '2D'
 
     renderView.ResetCamera(True)
-    showArray(resource, "theta", renderView, -1.0, 1.0)
+    showArray(resource, "theta", renderView, 0.0, 1.0)
     showGlyph(resource, renderView, glyphScale)
 
 
