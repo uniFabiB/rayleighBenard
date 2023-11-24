@@ -1,13 +1,47 @@
-#!/bin/sh
-# require package inotify-tools 
-MONITORDIR="./a/"
-TARGETDIR="$(pwd)"  # "$(pwd)" is working direcotry
-DELAYSECS=5
-inotifywait -m -r -e create "${MONITORDIR}" | while read PATH ACTION FILE
-do
-  echo "${ACTION} of file ${FILE} in ${PATH}"
-	FILEPATH="${PATH}${FILE}"
+#!/bin/bash
+MONITORDIR="$(pwd)"
+TARGETDIR="$(pwd)/result/"  # "$(pwd)" is working direcotry
+CHECKSECS=1
+DELAYSECS=3
+oldFiles="old"
+extension=".txt"
+
+MONITORDIRORG=$MONITORDIR
+#MONITORDIR=${MONITORDIR// /"\ "}
+#TARGETDIR=${TARGETDIR// /"\ "}
+
+
+moveDelayed () {
 	/bin/sleep ${DELAYSECS}
+	FILEPATH="${MONITORDIR}/$1"
 	echo "moving ${FILEPATH} to ${TARGETDIR}"
-  /bin/mv "${FILEPATH}" "${TARGETDIR}"
+	/bin/mv "${FILEPATH}" "${TARGETDIR}"
+}
+
+#inotifywait -m -r -e create "${MONITORDIR}" | while read PATH ACTION FILE
+
+while :
+do
+ 	allFilesNow=$(ls "$MONITORDIR")
+ 	if [ "$allFilesNow" != "$allFilesPrev" ]
+	then
+		echo $allFilesNow
+		#echo $allFilesPrev
+#		diff  <(echo "$allFilesPrev" ) <(echo "$allFilesNow")
+		newFiles=$(comm -23 <(echo "$allFilesNow" | sort) <(echo "$allFilesPrev" | sort))
+		files=( $newFiles )
+		for file in "${files[@]}"; do
+#			echo "$file"
+			if [[ $file == *"$extension" ]]
+			then			
+				echo "$file"
+				moveDelayed "$file" &
+			fi
+		done 
+	else
+		echo "they are the same"
+	fi
+	allFilesPrev="$allFilesNow"
+#	FILEPATH="${PATH}${FILE}"
+	/bin/sleep ${CHECKSECS}
 done
