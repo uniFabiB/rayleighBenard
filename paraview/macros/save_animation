@@ -6,6 +6,9 @@ res_y = 2000
 low_res_x = 925
 low_res_y = 500
 
+start_frame = 0    #0
+end_frame = 999999999999 #999999999999 #stops at max time step
+
 zoom_distance = 0.57             # lower = zoom in, higher = zoom out
 
 path = '/home/bleitner/Desktop/sims_animation/pic.png'
@@ -46,7 +49,7 @@ SaveAnimation(path, renderView1,
     StereoMode='No change',
     TransparentBackground=1,
     FrameRate=1,
-    FrameWindow=[0, ],
+    FrameWindow=[start_frame, end_frame],
     CompressionLevel='1',
     MetaData=['Application', 'ParaView'],
     SuffixFormat='.%04d')
