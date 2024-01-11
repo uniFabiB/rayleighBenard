@@ -7,7 +7,7 @@ low_res_x = 925
 low_res_y = 500
 
 start_frame = 0    #0
-end_frame = 999999999999 #999999999999 #stops at max time step
+end_frame = 99999999 #99999999 #stops at max time step
 
 zoom_distance = 0.57             # lower = zoom in, higher = zoom out
 
