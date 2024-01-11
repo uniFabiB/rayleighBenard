@@ -1,0 +1,52 @@
+# 3700 x 2000 works good for a 2:1 domain
+
+res_x = 3700
+res_y = 2000
+
+low_res_x = 925
+low_res_y = 500
+
+zoom_distance = 0.57             # lower = zoom in, higher = zoom out
+
+path = '/home/bleitner/Desktop/sims_animation/pic.png'
+
+
+#orgImageResolution=[3750, 2342]
+#org_zoom_distance=0.6369348369469824
+
+
+#### import the simple module from the paraview
+from paraview.simple import *
+#### disable automatic camera reset on 'Show'
+paraview.simple._DisableFirstRenderCameraReset()
+
+# get active view
+renderView1 = GetActiveViewOrCreate('RenderView')
+
+# reset view to fit data
+renderView1.ResetCamera(False)
+
+# get layout
+layout1 = GetLayout()
+
+# layout/tab size in pixels
+layout1.SetSize(low_res_x, low_res_y)
+
+# current camera placement for renderView1
+renderView1.InteractionMode = '2D'
+renderView1.CameraPosition = [1, 0.5, 4.36]    #[1, 0.5, 4.36]
+renderView1.CameraFocalPoint = [1, 0.5, 0.0]    #[1, 0.5, 0.0]
+renderView1.CameraParallelScale = zoom_distance
+
+# save animation
+SaveAnimation(path, renderView1,
+    ImageResolution=[res_x, res_y],
+    FontScaling='Scale fonts proportionally',
+    OverrideColorPalette='',
+    StereoMode='No change',
+    TransparentBackground=1,
+    FrameRate=1,
+    FrameWindow=[0, ],
+    CompressionLevel='1',
+    MetaData=['Application', 'ParaView'],
+    SuffixFormat='.%04d')
