@@ -25,23 +25,23 @@ utils.generateRecoveryScript(__file__)
 
 
 argParser = argparse.ArgumentParser()
-argParser.add_argument("--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint 100, this will load checkpoint_mesh.h5 and checkpoint_100.h5)", nargs=2)
+argParser.add_argument("--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint 100 2.7, this will load checkpoint_mesh.h5 and checkpoint_100.h5 with start time 2.7)", nargs=3)
 args = argParser.parse_args()
 
 ### PARAMETERS ###
-nXY = 128
+nXY = 256
 order = 1
 
 nOut = nXY
 
-uSpace = "Hdiv"			# either Hdiv or Lag
+uSpace = "Lag"			# either Hdiv or Lag
 
 #dt = 0.0001
-dt = 0.1
-writeOutputEveryXsteps = 1
-writeUP = True						# output u and p? False True
+dt = 0.02
+writeOutputEveryXsteps = 5
+writeUP = False						# output u and p? False True
 
-writeCheckpointEveryXsteps = 25
+writeCheckpointEveryXsteps = 50
 
 
 
@@ -52,12 +52,12 @@ t = 0.0
 tEnd = 10000 #1.0
 
 ### only nav slip ###
-alpha = 10.0**0			# alpha in tau Du n + alpha tau u = 0
+alpha = Constant(10.0**0)		# alpha in tau Du n + alpha tau u = 0
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**5			# ... + Ra * theta * e_2
+Ra = 10.0**9			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -152,6 +152,11 @@ V_p = FunctionSpace(mesh, "CG", order)
 V_t = FunctionSpace(mesh, "CG", order)
 
 
+#V_u = FunctionSpace(mesh, "BDM", 1)
+#V_p = FunctionSpace(mesh, "DG", 0)
+#V_t = FunctionSpace(mesh, "CG", 1)
+
+
 
 
 #alpha = Function(V_p,name="alpha").interpolate(conditional(x<Lx/2.0, 0.001, 1000.0))
@@ -221,7 +226,7 @@ F_crankNicolson_freeFall = (
 	+ dt*( 
 		1.0/2.0*(inner(dot(u,grad(theta)),s)+inner(dot(uOld,grad(thetaOld)),s))*dx
 		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s))+inner(grad(thetaOld), grad(s)))*dx
-		#- (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds term?!?!?!?!?!?!?!
+		- 1.0/(2.0*sqrt(Pr*Ra)) * kappa * (inner(dot(n,grad(theta)),s)+inner(dot(n,grad(thetaOld)),s))*ds
 	)
 	+ inner(u,grad(q))*dx
 )
@@ -241,7 +246,7 @@ F_crankNicolson_freeFall_NavSlip_hDiv = (
 	+ dt*( 
 		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
 		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
-		- inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
+		- 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
 	)
 	+ inner(u,grad(q))*dx
 	+ inner(grad(p),v)*dx
@@ -261,15 +266,103 @@ F_back_freeFall_NavSlip_hDiv = (
 	+ inner(theta-thetaOld,s)*dx
 	+ dt*( 
 		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
-		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * (inner(grad(theta), grad(s)))*dx
-		- inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
+		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta), grad(s))*dx
+		- 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
 	)
 	+ inner(u,grad(q))*dx
 	+ inner(grad(p),v)*dx
 )
 
+def perp(f):
+	return as_vector([-f[1],f[0]])
+# Hdiv nonlinear term
+# 1/2 grad (u^2) - u^perp nabla cdot u^perp = (u cdot nabla) u
+grad_term = - 1.0/2.0 * inner(div(v),dot(u,u))*dx
+perp_term = - inner(v,div(perp(u))*perp(u))*dx
+nonlin_term = (
+	grad_term
+	+ perp_term
+)
 
-F = F_crankNicolson_freeFall_NavSlip_hDiv
+gamma = Constant((100.0))
+c = Constant(10**1.0) # dark magic
+
+nonlin_term_cn = (
+	- 1.0/4.0 * inner(div(v),dot(u,u)+dot(uOld,uOld))*dx
+	- 1.0/2.0 * inner(v,div(perp(u))*perp(u)+div(perp(uOld))*perp(uOld))*dx
+)
+
+viscous_term_cn = (
+	1.0/2.0 * inner(grad(u+uOld), grad(v))*dx #this is the term over omega from the integration by parts
+	+ inner(avg(outer(v,n)),avg(grad(u+uOld)))*dS #this the term over interior surfaces from integration by parts
+	+ inner(avg(outer(u+uOld,n)),avg(grad(v)))*dS
+	+ alpha*inner(u+uOld,v)*ds #This deals with boundaries
+)
+
+
+
+F_hDiv_int_cn = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		nonlin_term_cn
+		+ sqrt(Pr/Ra) * nu * viscous_term_cn
+		- 1.0/2.0*inner(theta+thetaOld,v[1])*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
+		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
+		- 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
+	)
+	- inner(p,div(v))*dx
+	+ inner(div(u),q)*dx
+	
+#	+ gamma*div(v)*div(u)*dx		# stabilizing term 1
+	+ c*inner(jump(v),jump(u))*dS		# stabilizing term 2
+	+ c*inner(jump(v),jump(uOld))*dS	# stabilizing term 3
+	
+)
+
+# Hdiv with interior
+#dealing with viscous term
+viscous_byparts1 = inner(grad(u), grad(v))*dx #this is the term over omega from the integration by parts
+viscous_byparts2 = 2*inner(avg(outer(v,n)),avg(grad(u)))*dS #this the term over interior surfaces from integration by parts
+viscous_symetry = 2*inner(avg(outer(u,n)),avg(grad(v)))*dS #this the term ensures symetry while not changing the continuous equation
+viscous_stab = c*inner(jump(v),jump(u))*dS #stabilizes the equation, somehow
+#viscous_byparts2_ext = (inner(outer(v,n),grad(u)) + inner(outer(u,n),grad(v)))*ds #This deals with boundaries TOFIX : CONSIDER NON-0 BDARIEs 
+viscous_byparts2_ext = 2*alpha*inner(u,v)*ds #This deals with boundaries
+#viscous_ext = c*nXY*inner(v,u)*ds #this is a penalty term for the boundaries
+
+viscous_terms = (
+	viscous_byparts1
+	 + viscous_byparts2
+	 + viscous_symetry
+#	 + viscous_stab			#used directly in the variational form to omit Ra scaling for it
+	 + viscous_byparts2_ext
+#	 + viscous_ext
+)
+
+F_hDiv_int_back = (
+	inner(u-uOld,v)*dx
+	+ dt*(
+		nonlin_term
+		+ 1.0 * sqrt(Pr/Ra) * nu *viscous_terms
+		- 1.0/1.0*(inner(theta,v[1]))*dx
+	)
+	+ inner(theta-thetaOld,s)*dx
+	+ dt*( 
+		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
+		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta), grad(s))*dx
+		- 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
+	)
+	- inner(div(u),q)*dx
+	- inner(p,div(v))*dx
+	
+	+ viscous_stab
+#	+ gamma*div(v)*div(u)*dx
+)
+
+F = F_crankNicolson_freeFall
 
 
 # initial conditions for u
@@ -302,11 +395,11 @@ step = 0
 if args.load:
 	filename = args.load[0]
 	step = int(args.load[1])
-	utils.print("loading step " + str(step) + " from file " + filename + "_" + str(step) + ".h5")
+	t = float(args.load[2])
+	utils.print("loading step " + str(step) + " from file " + filename + "_" + str(step) + ".h5 at time " + str(t))
 	with CheckpointFile(filename + "_" + str(step) + ".h5", 'r') as inFile:
 		u = inFile.load_function(mesh, "u")
 		theta = inFile.load_function(mesh, "theta")
-t = step*dt
 
 uOld.assign(u)
 thetaOld.assign(theta)
@@ -403,7 +496,7 @@ def writeMeshFunctions():
 		uptFile.write(uOut, pOut, thetaOut, time=t)
 	else:
 		uptFile.write(thetaOut, time=t)
-	lastWrittenOutput = t
+	lastWrittenOutput = step
 
 
 # doesnt matter but otherwise renaming doesnt work
@@ -443,7 +536,7 @@ solverParams = 0		# (my) fast ones 0, firedrake default 1
 
 checkPointIndex = 0
 
-while(dt*step<=tEnd):
+while(t<=tEnd):
 	try:
 		#utils.print(solver.parameters)
 		solver.solve()
@@ -464,13 +557,23 @@ while(dt*step<=tEnd):
 			convergencewarningnumber += 1
 			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
 			utils.writeInfoFile()
+		if "DIVERGED_DTOL" in str(convError):
+			if solverParams == 1:
+				raise Exception("Diverged with both solverParams") # Don't! If you catch, likely to hide bugs.
+			solverParams = 1
+			utils.print("DIVERGED_DTOL, trying again with different solver parameters")
+			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
+			
+			convergencewarningnumber += 1
+			utils.putInfoInInfoString("DIVERGED_DTOL WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
+			utils.writeInfoFile()
 		else:
 			utils.print("error in solve")
 			raise Exception("convergence error")
 			
 	else:
 		step += 1
-		t = step*dt
+		t = round(t+dt,9)
 		utils.setSimulationTime(t)
 		u, p, theta = upt.subfunctions	# depending on the firedrake version have to either use upt.split() (old) or upt.subfunctions (newer)
 		
