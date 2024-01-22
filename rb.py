@@ -37,11 +37,11 @@ nOut = nXY
 uSpace = "Lag"			# either Hdiv or Lag
 
 #dt = 0.0001
-dt = 0.02
-writeOutputEveryXsteps = 5
+dt = 0.01
+writeOutputEveryXsteps = 1
 writeUP = False						# output u and p? False True
 
-writeCheckpointEveryXsteps = 50
+writeCheckpointEveryXsteps = 100
 
 
 
