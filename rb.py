@@ -38,10 +38,10 @@ uSpace = "Lag"			# either Hdiv or Lag
 
 #dt = 0.0001
 dt = 0.01
-writeOutputEveryXsteps = 1
+writeOutputEveryXsteps = 50
 writeUP = False						# output u and p? False True
 
-writeCheckpointEveryXsteps = 100
+writeCheckpointEveryXsteps = 500
 
 
 
@@ -52,12 +52,12 @@ t = 0.0
 tEnd = 10000 #1.0
 
 ### only nav slip ###
-alpha = Constant(10.0**0)		# alpha in tau Du n + alpha tau u = 0
+L_s = Constant(10.0**0)		# L_s in d_2 u_1 + 1/L_s n_2 u_1 = 0
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**9			# ... + Ra * theta * e_2
+Ra = 10.0**8			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -102,27 +102,6 @@ mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed"
 boundary_id_bot = 1
 boundary_id_top = 2
 boundary_ids = (1,2)
-# change y variable
-Vc = mesh.coordinates.function_space()
-x, y = SpatialCoordinate(mesh)
-# top
-ampTop = 0.02
-freqTop = 1
-freqSinTop = 3
-freqCosTop = 8
-offsetTop = 0.4*Lx
-# bot
-ampBot = ampTop
-freqBot = freqTop
-freqSinBot = freqSinTop
-freqCosBot = freqCosTop
-offsetBot = offsetTop+0.5*Lx
-# top
-y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*freqTop*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*freqTop*(x-offsetTop)/Lx))
-# bot
-y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*freqBot*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*freqBot*(x-offsetBot)/Lx))
-f = Function(Vc).interpolate(as_vector([x, y]))
-mesh.coordinates.assign(f)
 
 nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
 utils.print("sqrt(n^2 / core) ", nPerCore)
@@ -220,6 +199,7 @@ F_crankNicolson_freeFall = (
 		1.0/2.0*(inner(dot(u, nabla_grad(u)), v)+inner(dot(uOld, nabla_grad(uOld)), v))*dx
 		+ inner(grad(p),v)*dx
 		+ sqrt(Pr/Ra) * nu * 1.0/2.0*(inner(grad(u), grad(v))+inner(grad(uOld), grad(v)))*dx
+		+ sqrt(Pr/Ra) * nu * 1.0/L_s * 1.0/2.0*(inner(u+uOld,v))*ds
 		- 1.0/2.0*(inner(theta,v[1]) + inner(thetaOld,v[1]))*dx
 	)
 	+ inner(theta-thetaOld,s)*dx
@@ -231,136 +211,6 @@ F_crankNicolson_freeFall = (
 	+ inner(u,grad(q))*dx
 )
 
-#https://gmd.copernicus.org/preprints/gmd-2021-367/gmd-2021-367.pdf
-
-
-F_crankNicolson_freeFall_NavSlip_hDiv = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		1.0/2.0*inner(dot(u, nabla_grad(u)) + dot(uOld, nabla_grad(uOld)), v)*dx
-		+ sqrt(Pr/Ra) * nu * inner(Du + DuOld, Dv)*dx
-		+ sqrt(Pr/Ra) * nu * inner(alpha * (u + uOld),v)*ds
-		- 1.0/2.0*inner(theta+thetaOld,v[1])*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
-		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
-		- 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
-	)
-	+ inner(u,grad(q))*dx
-	+ inner(grad(p),v)*dx
-)
-
-
-F_back_freeFall_NavSlip_hDiv = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		1.0/1.0*(inner(dot(u, nabla_grad(u)), v))*dx
-		+ 2.0 * sqrt(Pr/Ra) * nu *(inner(Du, Dv))*dx
-		+ 2.0 * sqrt(Pr/Ra) * nu * alpha * (inner(u,v))*ds
-		#+ 2.0 * sqrt(Pr/Ra) * nu * (inner(dot(v,n),dot(n,dot(Du,n))))*ds
-		#+ 2.0 * sqrt(Pr/Ra) * nu * (inner(dot(u,n),dot(n,dot(Dv,n))))*ds
-		- 1.0/1.0*(inner(theta,v[1]))*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
-		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta), grad(s))*dx
-		- 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
-	)
-	+ inner(u,grad(q))*dx
-	+ inner(grad(p),v)*dx
-)
-
-def perp(f):
-	return as_vector([-f[1],f[0]])
-# Hdiv nonlinear term
-# 1/2 grad (u^2) - u^perp nabla cdot u^perp = (u cdot nabla) u
-grad_term = - 1.0/2.0 * inner(div(v),dot(u,u))*dx
-perp_term = - inner(v,div(perp(u))*perp(u))*dx
-nonlin_term = (
-	grad_term
-	+ perp_term
-)
-
-gamma = Constant((100.0))
-c = Constant(10**1.0) # dark magic
-
-nonlin_term_cn = (
-	- 1.0/4.0 * inner(div(v),dot(u,u)+dot(uOld,uOld))*dx
-	- 1.0/2.0 * inner(v,div(perp(u))*perp(u)+div(perp(uOld))*perp(uOld))*dx
-)
-
-viscous_term_cn = (
-	1.0/2.0 * inner(grad(u+uOld), grad(v))*dx #this is the term over omega from the integration by parts
-	+ inner(avg(outer(v,n)),avg(grad(u+uOld)))*dS #this the term over interior surfaces from integration by parts
-	+ inner(avg(outer(u+uOld,n)),avg(grad(v)))*dS
-	+ alpha*inner(u+uOld,v)*ds #This deals with boundaries
-)
-
-
-
-F_hDiv_int_cn = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		nonlin_term_cn
-		+ sqrt(Pr/Ra) * nu * viscous_term_cn
-		- 1.0/2.0*inner(theta+thetaOld,v[1])*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/2.0*inner(dot(u,grad(theta))+dot(uOld,grad(thetaOld)),s)*dx
-		+ 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta+thetaOld), grad(s))*dx
-		- 1.0/(2.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta+thetaOld)),s)*ds #term?!?!?!?!?!?!?!
-	)
-	- inner(p,div(v))*dx
-	+ inner(div(u),q)*dx
-	
-#	+ gamma*div(v)*div(u)*dx		# stabilizing term 1
-	+ c*inner(jump(v),jump(u))*dS		# stabilizing term 2
-	+ c*inner(jump(v),jump(uOld))*dS	# stabilizing term 3
-	
-)
-
-# Hdiv with interior
-#dealing with viscous term
-viscous_byparts1 = inner(grad(u), grad(v))*dx #this is the term over omega from the integration by parts
-viscous_byparts2 = 2*inner(avg(outer(v,n)),avg(grad(u)))*dS #this the term over interior surfaces from integration by parts
-viscous_symetry = 2*inner(avg(outer(u,n)),avg(grad(v)))*dS #this the term ensures symetry while not changing the continuous equation
-viscous_stab = c*inner(jump(v),jump(u))*dS #stabilizes the equation, somehow
-#viscous_byparts2_ext = (inner(outer(v,n),grad(u)) + inner(outer(u,n),grad(v)))*ds #This deals with boundaries TOFIX : CONSIDER NON-0 BDARIEs 
-viscous_byparts2_ext = 2*alpha*inner(u,v)*ds #This deals with boundaries
-#viscous_ext = c*nXY*inner(v,u)*ds #this is a penalty term for the boundaries
-
-viscous_terms = (
-	viscous_byparts1
-	 + viscous_byparts2
-	 + viscous_symetry
-#	 + viscous_stab			#used directly in the variational form to omit Ra scaling for it
-	 + viscous_byparts2_ext
-#	 + viscous_ext
-)
-
-F_hDiv_int_back = (
-	inner(u-uOld,v)*dx
-	+ dt*(
-		nonlin_term
-		+ 1.0 * sqrt(Pr/Ra) * nu *viscous_terms
-		- 1.0/1.0*(inner(theta,v[1]))*dx
-	)
-	+ inner(theta-thetaOld,s)*dx
-	+ dt*( 
-		1.0/1.0*(inner(dot(u,grad(theta)),s))*dx
-		+ 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(grad(theta), grad(s))*dx
-		- 1.0/(1.0*sqrt(Pr*Ra)) * kappa * inner(dot(n,grad(theta)),s)*ds #term?!?!?!?!?!?!?!
-	)
-	- inner(div(u),q)*dx
-	- inner(p,div(v))*dx
-	
-	+ viscous_stab
-#	+ gamma*div(v)*div(u)*dx
-)
 
 F = F_crankNicolson_freeFall
 
@@ -373,21 +223,28 @@ x, y = SpatialCoordinate(mesh)
 
 
 #icTheta = 10.0*sin(2*pi*x/Lx)*sin(2*pi*y/Ly)*exp(-1*(x**2+y**2))
-expFactor = 0.5
-[amp, x0, y0] = [10.0, -1.0, 2.0]
+#expFactor = 0.5
+#[amp, x0, y0] = [10.0, -1.0, 2.0]
 #icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-[amp, x0, y0] = [-10.0, 2.0, 2.0]
+#[amp, x0, y0] = [-10.0, 2.0, 2.0]
 #icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-[amp, x0, y0] = [-10.0, -3.0, 2.0]
+#[amp, x0, y0] = [-10.0, -3.0, 2.0]
 #icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-[amp, x0, y0] = [10.0, 1.0, 1.0]
+#[amp, x0, y0] = [10.0, 1.0, 1.0]
 #icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-[amp, x0, y0] = [10.0, 6.0, 3.0]
+#[amp, x0, y0] = [10.0, 6.0, 3.0]
 #icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
-[amp, x0, y0] = [-10.0, 4.0, 0.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+#[amp, x0, y0] = [-10.0, 4.0, 0.0]
+#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))(y-y0)**2))
+ic_boundary_topoffset = 0.3
+ic_boundary_freq_top = 7
+ic_boundary_freq_bot = ic_boundary_freq_top+1
+decay = 50
+ic_boundary_amp = 0.1
 
-icTheta = Constant(0.5)
+icTheta = 0.5
+icTheta += (-0.5+ic_boundary_amp+ic_boundary_amp*sin(ic_boundary_freq_top*2*pi*x/Lx))*exp(-(decay*(1-y))**2)	# top
+icTheta += (0.5-ic_boundary_amp+ic_boundary_amp*sin(ic_boundary_freq_bot*2*pi*(x/Lx+ic_boundary_topoffset)))*exp(-(decay*(y))**2)	# bot
 theta = project(icTheta, V_t)
 
 step = 0
@@ -420,8 +277,8 @@ if uSpace == "Hdiv":
 	bc_noPenHdiv = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary") # because of the hdiv space setting 0 bc for it is only setting u cdot n = 0 #https://github.com/firedrakeproject/firedrake/issues/169#issuecomment-34557942
 	bcs.append(bc_noPenHdiv)
 elif uSpace == "Lag":
-	bcs_noSlip = DirichletBC(Z.sub(0), Constant((0.0,0.0)), "on_boundary")
-	bcs.append(bcs_noSlip)
+	bcs_noPen = DirichletBC(Z.sub(0).sub(1), Constant((0.0)), "on_boundary")
+	bcs.append(bcs_noPen)
 	
 
 problem = NonlinearVariationalProblem(F, upt, bcs = bcs)
@@ -528,7 +385,7 @@ def calcBdryL2(func):
 	
 	
 def writeFactorError(fac, base):
-		error = calcBdryL2(fac*alpha*dot(u,tau)+dot(dot(n,Du),tau))
+		error = calcBdryL2(fac*1.0/L_s*dot(u,tau)+dot(dot(n,Du),tau))
 		#utils.print("temp\t",fac,"\t",error, "\t", (error/base))
 		utils.print("temp\t",fac,"\t", (error/base))
 
@@ -600,16 +457,17 @@ while(t<=tEnd):
 		utils.print(" ")
 		base = 	calcBdryL2(dot(u,tau)) + calcBdryL2(dot(n,dot(tau,Du)))
 #		factor = 0.25
-		#writeFactorError(0.25,base)
+		writeFactorError(0.25,base)
 		writeFactorError(0.50,base)
-		#writeFactorError(0.75,base)
-		writeFactorError(0.90,base)
+		writeFactorError(0.75,base)
+		#writeFactorError(0.90,base)
 		writeFactorError(1.00,base)
-		writeFactorError(1.10,base)
+		#writeFactorError(1.10,base)
 		#writeFactorError(1.25,base)
-		#writeFactorError(1.50,base)
+		writeFactorError(1.50,base)
 		#writeFactorError(1.75,base)
 		writeFactorError(2.00,base)
+		writeFactorError(4.00,base)
 		
 		# seems to converge to the nav slip for order to infty
 		# it should be the true solution if it solves the variational problem
