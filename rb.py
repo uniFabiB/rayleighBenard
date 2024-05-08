@@ -25,24 +25,24 @@ utils.generateRecoveryScript(__file__)
 
 
 argParser = argparse.ArgumentParser()
-argParser.add_argument("--load", help="load checkpoint file X at time Y (usage: python3 file.py checkpoint 100 2.7, this will load checkpoint_mesh.h5 and checkpoint_100.h5 with start time 2.7)", nargs=3)
+argParser.add_argument("--load", help="load checkpoint file X at time Y (usage: python3 file.py --load checkpoint 100 2.7, this will load checkpoint_mesh.h5 and checkpoint_100.h5 with start time 2.7)", nargs=3)
+argParser.add_argument("--refine", help="load checkpoint file X and refine the mesh and functions according to those here and save as checkpoint (usage: python3 file.py --refine checkpoint 100, this will load checkpoint_mesh.h5 and checkpoint_100.h5)", nargs=2)
 args = argParser.parse_args()
 
 ### PARAMETERS ###
-nXY = 256
+nXY = 512
 order = 1
 
 nOut = nXY
 
-uSpace = "Lag"			# either Hdiv or Lag
+uSpace = "Hdiv"			# either Hdiv or Lag
 
 #dt = 0.0001
 dt = 0.01
-writeOutputEveryXsteps = 1
+writeOutputEveryXsteps = 10
 writeUP = False						# output u and p? False True
 
-writeCheckpointEveryXsteps = 100
-
+writeCheckpointEveryXsteps = 50
 
 
 Lx = 2.0
@@ -57,7 +57,7 @@ alpha = Constant(10.0**0)		# alpha in tau Du n + alpha tau u = 0
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**9			# ... + Ra * theta * e_2
+Ra = 10.0**7			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -107,27 +107,68 @@ Vc = mesh.coordinates.function_space()
 x, y = SpatialCoordinate(mesh)
 # top
 ampTop = 0.02
-freqTop = 1
-freqSinTop = 3
-freqCosTop = 8
-offsetTop = 0.4*Lx
+freqTop = 2
+freqSinTop = 2
+freqCosTop = 6
+offsetTop = 0
 # bot
 ampBot = ampTop
-freqBot = freqTop
-freqSinBot = freqSinTop
-freqCosBot = freqCosTop
-offsetBot = offsetTop+0.5*Lx
+freqBot = 1
+freqSinBot = 3
+freqCosBot = 8
+offsetBot = 0.5*Lx
 # top
-y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*freqTop*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*freqTop*(x-offsetTop)/Lx))
+y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*(x-offsetTop)/Lx))
 # bot
-y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*freqBot*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*freqBot*(x-offsetBot)/Lx))
+y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*(x-offsetBot)/Lx))
 f = Function(Vc).interpolate(as_vector([x, y]))
 mesh.coordinates.assign(f)
 
 nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
 utils.print("sqrt(n^2 / core) ", nPerCore)
-#mesh = Mesh('mesh.msh')
+#mesh = Mesh('mesh1.msh')
 
+
+if args.refine:
+	filename = args.refine[0]
+	step = int(args.refine[1])
+	if COMM_WORLD.size > 1:
+		utils.print("!WARNING! running in parallel, but refinement needs to be on a single process")
+	utils.print("refining filename"+ str(step) + ".h5 to n="+str(nXY))
+	with CheckpointFile(args.refine[0] + "_mesh.h5", 'r') as meshInFile:
+		oldMesh = meshInFile.load_mesh("myMesh")
+	V_tOld = FunctionSpace(oldMesh, "CG", order)
+	V_t = FunctionSpace(mesh, "CG", order)
+	thetaOld = Function(V_tOld, name="theta")
+	theta = Function(V_t, name="theta")
+	theta.assign(0)
+	with CheckpointFile(filename + "_" + str(step) + ".h5", 'r') as inFile:
+		uOld = inFile.load_function(oldMesh, "u")
+		thetaOld = inFile.load_function(oldMesh, "theta")
+	coordsFine = Function(VectorFunctionSpace(mesh, "CG", 1)).interpolate(SpatialCoordinate(mesh))
+	uOld_values = np.array(uOld.at(coordsFine.dat.data))
+	thetaOld_values = np.array(thetaOld.at(coordsFine.dat.data))
+	theta.dat.data[:] = thetaOld_values
+	with CheckpointFile(outputFolder + "checkpoint_refined_mesh.h5", 'w') as meshOutFile:
+		utils.print("writing mesh checkpoint file")
+		meshOutFile.save_mesh(mesh)
+		
+	if uSpace == "Hdiv":
+		V_u = FunctionSpace(mesh, "RT", order+1)
+	elif uSpace == "Lag":
+		V_u = VectorFunctionSpace(mesh, "CG", order+1)
+	V_p = FunctionSpace(mesh, "CG", order)
+	V_t = FunctionSpace(mesh, "CG", order)
+	u = Function(V_u, name="u")
+	u.assign(as_vector([0,0]))
+	with CheckpointFile(outputFolder + "checkpoint_refined_"+ str(step) + ".h5", 'w') as outFile:
+		utils.print("writing functions checkpoint file")
+		u.rename("u")
+		outFile.save_function(u)
+		theta.rename("theta")
+		outFile.save_function(theta)
+	raise Exception("done refining")
+	
 
 if args.load:
 	with CheckpointFile(args.load[0] + "_mesh.h5", 'r') as meshInFile:
@@ -362,7 +403,7 @@ F_hDiv_int_back = (
 #	+ gamma*div(v)*div(u)*dx
 )
 
-F = F_crankNicolson_freeFall
+F = F_crankNicolson_freeFall_NavSlip_hDiv
 
 
 # initial conditions for u
@@ -375,17 +416,17 @@ x, y = SpatialCoordinate(mesh)
 #icTheta = 10.0*sin(2*pi*x/Lx)*sin(2*pi*y/Ly)*exp(-1*(x**2+y**2))
 expFactor = 0.5
 [amp, x0, y0] = [10.0, -1.0, 2.0]
-#icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, 2.0, 2.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, -3.0, 2.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [10.0, 1.0, 1.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [10.0, 6.0, 3.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 [amp, x0, y0] = [-10.0, 4.0, 0.0]
-#icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
+icTheta = icTheta + amp*exp(-expFactor*((x-x0)**2+(y-y0)**2))
 
 icTheta = Constant(0.5)
 theta = project(icTheta, V_t)
@@ -478,8 +519,8 @@ def writeMeshFunctions():
 	if nxOut != nx or nyOut != ny:
 		thetaOut = project(theta, V_ptOut)
 	else:
-#		thetaOut = theta
-		thetaOut = project(theta, V_ptOut)		
+		thetaOut = theta
+#		thetaOut = project(theta, V_ptOut)		
 	thetaOut.rename("theta")
 	if writeUP:
 		if nxOut != nx or nyOut != ny:
@@ -532,9 +573,12 @@ def writeFactorError(fac, base):
 		#utils.print("temp\t",fac,"\t",error, "\t", (error/base))
 		utils.print("temp\t",fac,"\t", (error/base))
 
-solverParams = 0		# (my) fast ones 0, firedrake default 1
+iterationTry = 0		# tracks iterates for convergence errors and tries again with different approaches (solverparams, dt)
 
 checkPointIndex = 0
+
+
+initial_dt = dt
 
 while(t<=tEnd):
 	try:
@@ -542,30 +586,32 @@ while(t<=tEnd):
 		solver.solve()
 	except ConvergenceError as convError:
 		utils.print(convError)
-		if "DIVERGED_LINEAR_SOLVE" in str(convError):
-			if solverParams == 1:
-				raise Exception("Diverged with both solverParams") # Don't! If you catch, likely to hide bugs.
-			solverParams = 1
-			utils.print("DIVERGED_LINEAR_SOLVE, trying again with different solver parameters")
-			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
-			# there is an error where the linear solve doesn't converge. The reason seems to be that the 0 KSP preconditioned resid norm for the first try to linear solve is high (~ 80* the one of the usual first prec resid norm)
-			# old "solution" for now change the data a bit and try again -> new solution change preconditioner
-
-			# TRY ANOTHER PRECONDITIONER AT ERROR!!!
-			# CHECK IF IT IS THE RIGHT ERROR FIRST
-			# PRINT ERROR STACK ANYWAYS
+		myErrorMsg = ""
+		if "DIVERGED_LINEAR_SOLVE" in str(convError) or "DIVERGED_DTOL" in str(convError) or "DIVERGED_MAX_IT" in str(convError):
+			myErrorMsg = ""
+			if "DIVERGED_LINEAR_SOLVE" in str(convError):
+				myErrorMsg = "DIVERGED_LINEAR_SOLVE"
+			if "DIVERGED_DTOL" in str(convError):
+				myErrorMsg = "DIVERGED_DTOL"
+			if "DIVERGED_MAX_IT" in str(convError):
+				myErrorMsg = "DIVERGED_MAX_IT"
+				
+			if iterationTry == 2:
+				utils.print(myErrorMsg)
+				raise Exception("Diverged with all fixes")
+			if iterationTry == 1:
+				myFullErrorMsg = myErrorMsg + ", trying with different dt"
+				utils.print(myFullErrorMsg)
+				utils.putInfoInInfoString("convergence warning "+str(convergencewarningnumber), " at time " + str(t + dt) + ": " + myFullErrorMsg)
+				dt = 0.5*initial_dt				
+				iterationTry = 2
+			if iterationTry == 0:
+				myFullErrorMsg = myErrorMsg + ", trying again with different solver parameters"
+				utils.print(myFullErrorMsg)
+				utils.putInfoInInfoString("convergence warning "+str(convergencewarningnumber), " at time " + str(t + dt) + ": " + myFullErrorMsg)
+				solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
+				iterationTry = 1
 			convergencewarningnumber += 1
-			utils.putInfoInInfoString("DIVERGED_LINEAR_SOLVE WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
-			utils.writeInfoFile()
-		if "DIVERGED_DTOL" in str(convError):
-			if solverParams == 1:
-				raise Exception("Diverged with both solverParams") # Don't! If you catch, likely to hide bugs.
-			solverParams = 1
-			utils.print("DIVERGED_DTOL, trying again with different solver parameters")
-			solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
-			
-			convergencewarningnumber += 1
-			utils.putInfoInInfoString("DIVERGED_DTOL WARNING "+str(convergencewarningnumber), "at time " + str(t + dt) + ": trying again different solver parameters")
 			utils.writeInfoFile()
 		else:
 			utils.print("error in solve")
@@ -622,9 +668,10 @@ while(t<=tEnd):
 		tWorld = datetime.datetime.now()
 		
 		
-		if solverParams == 1:
+		if iterationTry > 0:
 			utils.print("reverting to my parameters")
-			solverParams = 0
+			iterationTry = 0
 			solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
+			dt = initial_dt
 	
 utils.writeEndInfo()
