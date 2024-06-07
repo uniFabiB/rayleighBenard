@@ -1,4 +1,13 @@
 https://itwiki.math.uni-hamburg.de/doku.php/de:user:server
+
+ssh outside uni
+	ssh -K bxxXXXX@login1.math.uni-hamburg.de
+	ssh bxxXXXX@compu3.math.uni-hamburg.de
+	tmux
+	source firedrake
+	mpiexec -n numberCores python3 script.py
+	
+
 ssh command
 	ssh -K bxxXXXX@compu4.math.uni-hamburg.de
 		24 cores
