@@ -63,7 +63,9 @@ pictures
 		append vertically
 			cd top
 			for i in * ; do convert -append ${i} ../bot/${i} ../ges/$i ; done
-			
+	reduce resultion
+		for i in * ; do convert "$i" -resize 2100x1100 ../low_res/$i ; done
+		for i in * ; do convert "$i" -resize 50x50% ../low_res/$i ; done
 
 video
 	pics.0000.png	pics.0001.png	pics.0002.png	...
