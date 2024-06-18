@@ -82,5 +82,8 @@ video
 			output 30 fps (output)
 		-pix_fmt yuv420p
 			for compatibility with old players
+
+	interpolate
+	ffmpeg -i video.mp4 -filter "minterpolate='fps=30'" video_30fps.mp4
 		
 		
