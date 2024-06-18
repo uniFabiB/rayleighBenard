@@ -52,12 +52,14 @@ tmux
 pictures
 	convert transparent to color
 		for i in *.png ; do convert "$i" -background "#eeeeee" -flatten "../out/$i" ; done
-	crop to 1920 1080 (and i guess offset) 0 0
-		for i in *.png ; do convert "$i" -crop 1920x1080+0+0 "../out/$i" ; done
+	crop to 1920 1080 offset 200 10
+		for i in *.png ; do convert "$i" -crop 1920x1080+200+10 "../out/$i" ; done
+	extend with color to size 2500+125x1250+125
+		for i in *.png ; do convert "$i" -background "#000000" -gravity southeast -extent 2625x1375 "../out/$i" ; done
 	combine pictures
 		append horizontal
 			cd 10_2
-			for i in * ; do convert +append ${i} ../104/${i} ../top/$i ; done
+			for i in * ; do convert +append ${i} ../10_4/${i} ../top/$i ; done
 		append vertically
 			cd top
 			for i in * ; do convert -append ${i} ../bot/${i} ../ges/$i ; done
