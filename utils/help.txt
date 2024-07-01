@@ -87,5 +87,8 @@ video
 
 	interpolate
 	ffmpeg -i video.mp4 -filter "minterpolate='fps=30'" video_30fps.mp4
+
+	interpolate and reduce resolution
+	ffmpeg -framerate 10 -i pic.%04d.png -pix_fmt yuv420p -vf scale="iw/2:ih/2" -filter "minterpolate='fps=30'" ../out4.mp4
 		
 		
