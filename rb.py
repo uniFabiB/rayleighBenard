@@ -30,7 +30,7 @@ argParser.add_argument("--refine", help="load checkpoint file X and refine the m
 args = argParser.parse_args()
 
 ### PARAMETERS ###
-nXY = 512
+nXY = 256
 order = 1
 
 nOut = nXY
@@ -52,12 +52,24 @@ t = 0.0
 tEnd = 10000 #1.0
 
 ### only nav slip ###
-alpha = Constant(10.0**0)		# alpha in tau Du n + alpha tau u = 0
+# Navier-slip wall law (per wall, tangential direction tau):
+#     (2 nu_eff D(u).n).tau  +  2 nu_eff * alpha * (u.tau)  =  0
+# i.e.  tau.D(u).n + alpha (u.tau) = 0 ,  D(u) = sym(grad u) ,  nu_eff = sqrt(Pr/Ra)*nu
+# alpha -> 0    : free (perfect) slip
+# alpha -> inf  : no slip
+# slip length ~ 1/alpha  (compare to Ly = 1).  alpha = 1 here is a *very* slippery wall.
+alpha = Constant(10.0**0)
+
+# symmetric-interior-penalty (SIPG) parameter for the H(div) viscous form.
+# needs to exceed the discrete-Korn / trace-inverse threshold (~ O(k^2)); raise it
+# if the Newton/Krylov solve diverges, lower it toward that threshold if the near-wall
+# shear layer looks over-damped.  Effective penalty is  ipPenalty*k(k+1) * nu_eff / h.
+ipPenalty = Constant(3.0)
 
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**7			# ... + Ra * theta * e_2
+Ra = 10.0**5			# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -68,6 +80,7 @@ Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 projectPoutputToAverageFree = False 	# force the output function of p to be average free (doesn't change the calculation)
 
 dataFolder = outputFolder + "data/"
+utils.checkIfFolderExists(dataFolder)
 
 
 nx = round(nXY*Lx/Ly)
@@ -90,6 +103,9 @@ utils.putInfoInInfoString("Ly",Ly)
 utils.putInfoInInfoString("tEnd",tEnd)
 utils.putInfoInInfoString("kappa",kappa)
 utils.putInfoInInfoString("Ra",Ra)
+utils.putInfoInInfoString("uSpace",uSpace)
+utils.putInfoInInfoString("alpha (navier-slip)",alpha)
+utils.putInfoInInfoString("ipPenalty",ipPenalty)
 utils.putInfoInInfoString("projectPoutputToAverageFree",projectPoutputToAverageFree)
 utils.putInfoInInfoString("dataFolder",dataFolder)
 utils.putInfoInInfoString("args",args)
@@ -155,9 +171,10 @@ if args.refine:
 		
 	if uSpace == "Hdiv":
 		V_u = FunctionSpace(mesh, "RT", order+1)
+		V_p = FunctionSpace(mesh, "DG", order)
 	elif uSpace == "Lag":
 		V_u = VectorFunctionSpace(mesh, "CG", order+1)
-	V_p = FunctionSpace(mesh, "CG", order)
+		V_p = FunctionSpace(mesh, "CG", order)
 	V_t = FunctionSpace(mesh, "CG", order)
 	u = Function(V_u, name="u")
 	u.assign(as_vector([0,0]))
@@ -187,9 +204,14 @@ tau = as_vector((-n[1],n[0]))
 
 if uSpace == "Hdiv":
 	V_u = FunctionSpace(mesh, "RT", order+1)
+	# RT(order+1) is inf-sup stable and gives a *pointwise* divergence-free velocity
+	# only when paired with a fully discontinuous pressure DG(order).  With CG pressure
+	# the velocity is merely weakly solenoidal, the scheme is not pressure-robust and
+	# the (u,p) Schur complement is poorly conditioned -> GMRES stalls (DIVERGED_MAX_IT).
+	V_p = FunctionSpace(mesh, "DG", order)
 elif uSpace == "Lag":
 	V_u = VectorFunctionSpace(mesh, "CG", order+1)
-V_p = FunctionSpace(mesh, "CG", order)
+	V_p = FunctionSpace(mesh, "CG", order)
 V_t = FunctionSpace(mesh, "CG", order)
 
 
@@ -403,7 +425,98 @@ F_hDiv_int_back = (
 #	+ gamma*div(v)*div(u)*dx
 )
 
-F = F_crankNicolson_freeFall_NavSlip_hDiv
+# ============================================================================
+#  Navier-slip, H(div)  --  symmetric interior penalty (SIPG) form   [USE THIS]
+# ============================================================================
+#  Strong problem (free-fall / Padberg-Gehle scaling, nu_eff = sqrt(Pr/Ra)*nu):
+#
+#     u_t + (u.grad)u + grad p - div(2 nu_eff D(u)) = theta e_2
+#     div u = 0
+#     theta_t + u.grad theta - kappa_eff Delta theta = 0 ,  kappa_eff = 1/sqrt(Pr Ra)
+#
+#  Walls (top+bottom, possibly wavy):
+#     u.n = 0                                        <- essential, imposed strongly
+#                                                       via the RT normal dofs
+#     (2 nu_eff D(u).n).tau + 2 nu_eff alpha (u.tau) = 0   <- Navier slip, natural
+#
+#  WHY THIS FORM (and why the earlier attempts misbehaved):
+#  ------------------------------------------------------------------------
+#  * Navier slip is a condition on the *symmetric* stress D(u).n, so the viscous
+#    operator MUST be the symmetric-gradient one, inner(D(u),D(v)) -- NOT
+#    inner(grad(u),grad(v)).  With grad(u):grad(v) the boundary term produced by
+#    integration by parts is d u/d n, not tau.D(u).n, so the discrete slip law is
+#    the wrong one (this is the "wrong amount of wall diffusion").
+#
+#  * RT velocity has CONTINUOUS NORMAL but DISCONTINUOUS TANGENTIAL trace, so the
+#    global RT space is NOT in H^1.  The bare cell integral inner(D(u),D(v))*dx is
+#    then (a) inconsistent -- it drops the inter-element coupling of the tangential
+#    traces -- and (b) not coercive: the discrete Korn inequality fails without a
+#    tangential-jump penalty.  That is exactly why it "did not converge".
+#    The fix is the standard SIPG treatment of -div(2 nu_eff D(u)) on H(div):
+#        - interior consistency term      -inner(avg(2 nu_eff D(u)), jump(v,n))
+#        - interior symmetry   term       -inner(avg(2 nu_eff D(v)), jump(u,n))
+#        - interior penalty    term       + (sigma nu_eff / h) jump(u).jump(v)
+#    Because the normal trace is continuous these facet terms only act on the
+#    tangential jump -- precisely what RT is missing.  The hand-tuned
+#    c*jump(v).jump(u)*dS "dark magic" was an under-scaled stand-in for the
+#    penalty term (no 1/h, no nu_eff), which is why it neither converged under
+#    mesh refinement nor gave a mesh-independent solution.
+#
+#  * The Navier-slip wall term is the *natural* boundary term of the symmetric
+#    form after substituting the slip law: + 2 nu_eff alpha (u.tau)(v.tau) ds.
+#    No Nitsche term is needed for u.n = 0 because that is imposed strongly.
+#
+#  * Pressure is DG(order) (see V_p above) so div u = 0 holds pointwise and the
+#    coupling is the consistent mixed one  -inner(p,div v) + inner(div u, q).
+
+nu_eff    = sqrt(Pr/Ra) * nu
+kappa_eff = 1.0/sqrt(Pr*Ra) * kappa
+
+k_u   = order + 1									# RT(order+1) ~ vector degree order+1
+h_ip  = avg(CellVolume(mesh)) / FacetArea(mesh)					# interior facet length scale
+sigma = ipPenalty * k_u * (k_u + 1)						# SIPG penalty weight
+
+def Dsym(w):
+	return sym(grad(w))
+
+def jumpn(w):
+	# tensor jump  [[ w (x) n ]] = w+ (x) n+  +  w- (x) n-  (a 2x2 tensor).
+	# NB: ufl.jump(w, n) for a *vector* w returns only the SCALAR normal-component
+	# jump, which is not what the SIPG symmetric-gradient form needs.
+	return outer(w('+'), n('+')) + outer(w('-'), n('-'))
+
+def a_visc(w, z):
+	# 2 nu_eff * ( D(w) : D(z) )  with the H(div)-SIPG facet terms and the
+	# Navier-slip Robin boundary term.  Linear in w and in z.
+	# jump(w) (no normal arg) = w+ - w- ; since RT has continuous normal trace,
+	# inner(jump(w), jump(z)) == [[w (x) n]] : [[z (x) n]] (only tangential part).
+	return (
+		2.0*nu_eff*inner(Dsym(w), Dsym(z))*dx
+		- 2.0*nu_eff*inner(avg(Dsym(w)), jumpn(z))*dS
+		- 2.0*nu_eff*inner(avg(Dsym(z)), jumpn(w))*dS
+		+ 2.0*nu_eff*(sigma/h_ip)*inner(jump(w), jump(z))*dS
+		+ 2.0*nu_eff*alpha*inner(dot(w, tau), dot(z, tau))*ds
+	)
+
+F_navierSlip_hdiv_IP_cn = (
+	inner(u - uOld, v)*dx
+	+ dt*(
+		nonlin_term_cn								# vector-invariant (rot) form, H(div)-friendly
+		+ 0.5*a_visc(u + uOld, v)						# Crank-Nicolson: a_visc( (u+uOld)/2 , v )
+		- 0.5*inner(theta + thetaOld, v[1])*dx					# buoyancy  + theta e_2
+	)
+	- inner(p, div(v))*dx								# pressure gradient (DG pressure)
+	+ inner(div(u), q)*dx								# incompressibility
+	+ inner(theta - thetaOld, s)*dx
+	+ dt*(
+		0.5*inner(dot(u, grad(theta)) + dot(uOld, grad(thetaOld)), s)*dx
+		+ 0.5*kappa_eff*inner(grad(theta + thetaOld), grad(s))*dx
+		# no boundary flux term: theta has strong Dirichlet data on top+bottom
+		# (s = 0 there) and the mesh is periodic in x, so ds carries nothing.
+	)
+)
+
+F = F_navierSlip_hdiv_IP_cn
 
 
 # initial conditions for u
@@ -503,7 +616,7 @@ appctx = {"velocity_space": 0}
 solver = NonlinearVariationalSolver(problem, nullspace = nullspace, solver_parameters=parameters_my, appctx=appctx)
 #solver = NonlinearVariationalSolver(problem, nullspace = nullspace)
 
-uptFile = File(dataFolder+"upt.pvd", comm = comm)
+uptFile = VTKFile(dataFolder+"upt.pvd", comm = comm)
 lastWrittenOutput = step
 lastWrittenCheckpoint = step
 
