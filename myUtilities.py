@@ -34,13 +34,14 @@ class utils:
 			sys.stdout.flush()
 			
 
-	def __init__(self, comm = None, outputFolder = "output/"):
+	def __init__(self, comm = None, outputFolder = "output/", autoCreateFolders = True):
 		if comm == None:
 			self.rank = 0
 		else:
 			self.rank = comm.Get_rank()
 			ensembleSize = comm.size
 		self.comm = comm
+		self.autoCreateFolders = autoCreateFolders
 		self.setStartTime(datetime.datetime.now())
 		sys.excepthook = self.err
 		self.print("starting")
@@ -58,12 +59,17 @@ class utils:
 		comm.Barrier()
 			
 	
-	def checkIfFolderExists(self, folder):
+	def checkIfFolderExists(self, folder, autoCreate = None):
+		if autoCreate is None:
+			autoCreate = self.autoCreateFolders
 		if not os.path.isdir(folder):
-			createFolderAnswer = self.askYesNoQuestion("directory ("+folder+") doesn't exist! create directory?", True)
+			if autoCreate:
+				createFolderAnswer = True
+			else:
+				createFolderAnswer = self.askYesNoQuestion("directory ("+folder+") doesn't exist! create directory?", True)
 			if createFolderAnswer:
 				if self.rank == 0:
-					os.mkdir(folder)
+					os.makedirs(folder, exist_ok=True)
 				self.print("creating output directory (",folder,")")
 			else:
 				raise Exception("output directory doesn't exist!")
