@@ -39,17 +39,19 @@ uSpace = "Hdiv"			# either Hdiv or Lag
 
 #dt = 0.0001
 dt = 0.01
-writeOutputEveryXsteps = 10
+writeOutputEveryXsteps = 500
 writeUP = False						# output u and p? False True
 
-writeCheckpointEveryXsteps = 50
+writeCheckpointEveryXsteps = 5000
 
 
-Lx = 2.0
 Ly = 1.0
+Lx = Ly*(1.0+2.0*0.01)*16.0/9.0    # 16/9 * Ly * (1+2*boundaryVariationAmplitude)
+
+ls = 0.01                          # effective slip length -> sets alpha = 1/(2*ls)
 
 t = 0.0
-tEnd = 10000 #1.0
+tEnd = 120
 
 ### only nav slip ###
 # Navier-slip wall law (per wall, tangential direction tau):
@@ -57,8 +59,8 @@ tEnd = 10000 #1.0
 # i.e.  tau.D(u).n + alpha (u.tau) = 0 ,  D(u) = sym(grad u) ,  nu_eff = sqrt(Pr/Ra)*nu
 # alpha -> 0    : free (perfect) slip
 # alpha -> inf  : no slip
-# slip length ~ 1/alpha  (compare to Ly = 1).  alpha = 1 here is a *very* slippery wall.
-alpha = Constant(10.0**0)
+# slip length ~ 1/(2 * alpha)  (compare to Ly = 1).  alpha = 1 here is a *very* slippery wall.
+alpha = Constant(1.0/(2.0*ls))
 
 # symmetric-interior-penalty (SIPG) parameter for the H(div) viscous form.
 # needs to exceed the discrete-Korn / trace-inverse threshold (~ O(k^2)); raise it
@@ -69,7 +71,7 @@ ipPenalty = Constant(3.0)
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**5			# ... + Ra * theta * e_2
+Ra = 10.0**10    		# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -122,7 +124,7 @@ boundary_ids = (1,2)
 Vc = mesh.coordinates.function_space()
 x, y = SpatialCoordinate(mesh)
 # top
-ampTop = 0.02
+ampTop = 0.01
 freqTop = 2
 freqSinTop = 2
 freqCosTop = 6
