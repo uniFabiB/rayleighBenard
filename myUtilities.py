@@ -146,12 +146,14 @@ class utils:
 		sys.__excepthook__(type, value, tb)
 	
 	def writeInfoFile(self):
+	    self.writeToFile(self.infoFilePath, self.infoString)
+	    self.infoString = ""	
+	
+	def writeToFile(self, filepath, string):
 		if self.rank == 0:
-			infoFile = open(self.infoFilePath,"a")
-			infoFile.write(self.infoString)
-			infoFile.close()
-			self.infoString = ""	
-			
+			infoFile = open(filepath,"a")
+			infoFile.write(string)
+			infoFile.close()			
 			
 	def askYesNoQuestion(self, question, defaultAnswer):
 		retVal = defaultAnswer

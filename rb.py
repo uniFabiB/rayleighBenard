@@ -71,7 +71,7 @@ ipPenalty = Constant(3.0)
 				
 nu = 1.0			# ... - nu * Laplace u ...
 kappa = 1.0			# ... - kappa * Laplace theta ...
-Ra = 10.0**10    		# ... + Ra * theta * e_2
+Ra = 10.0**15    		# ... + Ra * theta * e_2
 Pr = 1.0			# 1/Pr*(u_t+u cdot nabla u) + ...
 
 
@@ -98,10 +98,13 @@ printErrors = True
 #nCells = nx*ny*2	for diagonal "left" or "right"
 #nCells = nx*ny*4	for diagonal "crossed"
 
+area = Lx*Ly
+
 utils.putInfoInInfoString("nXY",nXY)
 utils.putInfoInInfoString("dt",dt)
 utils.putInfoInInfoString("Lx",Lx)
 utils.putInfoInInfoString("Ly",Ly)
+utils.putInfoInInfoString("area",area)
 utils.putInfoInInfoString("tEnd",tEnd)
 utils.putInfoInInfoString("kappa",kappa)
 utils.putInfoInInfoString("Ra",Ra)
@@ -755,7 +758,12 @@ while(t<=tEnd):
 		utils.print("u n\t\t",calcBdryL2(dot(u,n)))
 		utils.print("u tau\t",calcBdryL2(dot(u,tau)))	
 		utils.print("n Du tau\t",calcBdryL2(dot(n,dot(tau,Du))))
-		utils.print("n grad theta\t",calcBdryL2(dot(n,grad(theta))))
+		utils.print("n grad theta/area\t",calcBdryL2(dot(n,grad(theta)))/area)
+		utils.print("")
+		Nu=assemble(inner(grad(theta),grad(theta))*dx)/area
+		utils.print("||nabla theta||_2^2/area\t",Nu)
+		utils.writeToFile(outputFolder+"nu.txt", str(round(t,9))+"\t"+str(Nu)+"\n")
+		
 		
 #		utils.print("temp\t",factor,"\t",assemble(inner(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau),factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))*ds))
 		utils.print(" ")
