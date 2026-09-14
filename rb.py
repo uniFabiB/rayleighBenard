@@ -758,11 +758,13 @@ while(t<=tEnd):
 		utils.print("u n\t\t",calcBdryL2(dot(u,n)))
 		utils.print("u tau\t",calcBdryL2(dot(u,tau)))	
 		utils.print("n Du tau\t",calcBdryL2(dot(n,dot(tau,Du))))
-		utils.print("n grad theta/area\t",calcBdryL2(dot(n,grad(theta)))/area)
 		utils.print("")
 		Nu=assemble(inner(grad(theta),grad(theta))*dx)/area
 		utils.print("||nabla theta||_2^2/area\t",Nu)
 		utils.writeToFile(outputFolder+"nu.txt", str(round(t,9))+"\t"+str(Nu)+"\n")
+		Nu2=calcBdryL2(dot(n,grad(theta)))/area
+		utils.print("n grad theta/area\t",Nu2)
+		utils.writeToFile(outputFolder+"nu2.txt", str(round(t,9))+"\t"+str(Nu2)+"\n")
 		
 		
 #		utils.print("temp\t",factor,"\t",assemble(inner(factor*alpha*dot(u,tau)+dot(dot(n,Du),tau),factor*alpha*dot(u,tau)+dot(dot(n,Du),tau))*ds))
