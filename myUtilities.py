@@ -54,6 +54,7 @@ class utils:
 		self.deletePreviousInfoFileContent()
 		self.putInfoInInfoString("outputFolder", outputFolder)
 		self.putInfoInInfoString("ensembleSize", ensembleSize)
+		self.writeInfoFile()
 		
 	#	sys.stdout.flush()
 		comm.Barrier()
