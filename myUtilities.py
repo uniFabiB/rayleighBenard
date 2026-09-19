@@ -73,7 +73,7 @@ class utils:
 				self.print("creating output directory (",folder,")")
 			else:
 				raise Exception("output directory doesn't exist!")
-			self.comm.Barrier()
+		self.comm.Barrier()
 	
 	def setInfoFilePath(self, infoFilePath):
 		self.infoFilePath = infoFilePath
