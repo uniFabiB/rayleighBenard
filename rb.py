@@ -10,7 +10,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)		# ignores deprec
 										#DeprecationWarning: Expr.ufl_domain() is deprecated, please use extract_unique_domain(expr) instead.
 										#  warnings.warn("Expr.ufl_domain() is deprecated, please 
 import datetime
-import weakref
 
 import argparse
 
@@ -101,6 +100,7 @@ printErrors = True
 area = Lx*Ly
 
 utils.putInfoInInfoString("nXY",nXY)
+utils.putInfoInInfoString("nOut (output mesh)",nOut)
 utils.putInfoInInfoString("dt",dt)
 utils.putInfoInInfoString("Lx",Lx)
 utils.putInfoInInfoString("Ly",Ly)
@@ -119,13 +119,11 @@ utils.putInfoInInfoString("args",args)
 
 
 ### mesh ###
-mesh = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed", name="myMesh")	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir
 boundary_id_bot = 1
 boundary_id_top = 2
 boundary_ids = (1,2)
-# change y variable
-Vc = mesh.coordinates.function_space()
-x, y = SpatialCoordinate(mesh)
+
+# wavy wall parameters
 # top
 ampTop = 0.01
 freqTop = 2
@@ -138,12 +136,22 @@ freqBot = 1
 freqSinBot = 3
 freqCosBot = 8
 offsetBot = 0.5*Lx
-# top
-y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*(x-offsetTop)/Lx))
-# bot
-y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*(x-offsetBot)/Lx))
-f = Function(Vc).interpolate(as_vector([x, y]))
-mesh.coordinates.assign(f)
+
+def createMesh(nx, ny, name):
+	# mesh Lx=Gamma in e_1, Ly in e_2, periodic in x=e_1 dir, with wavy top and bottom wall
+	# used for the (fine) simulation mesh and the (coarse) output mesh so that both describe the same geometry
+	m = PeriodicRectangleMesh(nx,ny,Lx,Ly, "x", comm = comm, diagonal = "crossed", name=name)
+	Vc = m.coordinates.function_space()
+	x, y = SpatialCoordinate(m)
+	# top
+	y = y + y/Ly * ampTop * sin(2*pi*freqTop*(x-offsetTop)/Lx+freqSinTop*sin(2*pi*(x-offsetTop)/Lx)+freqCosTop*cos(2*pi*(x-offsetTop)/Lx))
+	# bot
+	y = y + (1-y/Ly) * ampBot * sin(2*pi*freqBot*(x-offsetBot)/Lx+freqSinBot*sin(2*pi*(x-offsetBot)/Lx)+freqCosBot*cos(2*pi*(x-offsetBot)/Lx))
+	f = Function(Vc).interpolate(as_vector([x, y]))
+	m.coordinates.assign(f)
+	return m
+
+mesh = createMesh(nx, ny, "myMesh")
 
 nPerCore = abs(sqrt(mesh.num_entities(2)/(4)))  # seems to work but not super accurate
 utils.print("sqrt(n^2 / core) ", nPerCore)
@@ -625,33 +633,46 @@ uptFile = VTKFile(dataFolder+"upt.pvd", comm = comm)
 lastWrittenOutput = step
 lastWrittenCheckpoint = step
 
-def projectAvgFree(f, fOutput):
-	avgF = 1/(Lx*Ly)*assemble(f*dx)
-	fOutput.assign(f-avgF)
-	return fOutput
+# output mesh: the simulation runs on the (fine) mesh, but the output is interpolated onto a
+# separate (coarse) mesh with the same wavy geometry to save disk space
+sameOutputMesh = (nxOut == nx and nyOut == ny)
+
+if sameOutputMesh:
+	meshOut = mesh
+else:
+	if nx % nxOut != 0 or ny % nyOut != 0:
+		utils.print("WARNING: output mesh ("+str(nxOut)+"x"+str(nyOut)+") is not a coarsening of the simulation mesh ("+str(nx)+"x"+str(ny)+"), "
+			+"output nodes on the wavy walls may lie outside the fine mesh and the interpolation can fail. Choose nOut such that nx/nxOut and ny/nyOut are integers.")
+	meshOut = createMesh(nxOut, nyOut, "outMesh")
+	# make points that sit on the boundary (up to rounding) findable during the cross-mesh interpolation
+	mesh.tolerance = 1e-8
+
+V_uOut = VectorFunctionSpace(meshOut, "CG", 1)
+V_ptOut = FunctionSpace(meshOut, "CG", 1)
+
+thetaOut = Function(V_ptOut, name="theta")
+uOut = Function(V_uOut, name="u")
+pOut = Function(V_ptOut, name="p")
 
 
 def writeMeshFunctions():
 	global lastWrittenOutput
 	
-	if nxOut != nx or nyOut != ny:
-		thetaOut = project(theta, V_ptOut)
+	if sameOutputMesh:
+		thetaOut.assign(theta)
 	else:
-		thetaOut = theta
-#		thetaOut = project(theta, V_ptOut)		
-	thetaOut.rename("theta")
+		thetaOut.interpolate(theta)		# cross-mesh interpolation fine -> coarse
 	if writeUP:
-		if nxOut != nx or nyOut != ny:
-			uOut = project(u, V_uOut)
-			pOut = project(p, V_ptOut)
+		if sameOutputMesh:
+			uOut.assign(u)
+			pOut.assign(p)
 		else:
-			uOut = u
-			pOut = p
+			uOut.interpolate(u)
+			pOut.interpolate(p)
 		if projectPoutputToAverageFree:
-			pOut = projectAvgFree(pOut, pOut)
-		
-		uOut.rename("u")
-		pOut.rename("p")
+			# average is taken on the fine mesh (more accurate) and removed from the output
+			avgP = 1/(Lx*Ly)*assemble(p*dx)
+			pOut.assign(pOut - avgP)
 		uptFile.write(uOut, pOut, thetaOut, time=t)
 	else:
 		uptFile.write(thetaOut, time=t)
@@ -661,13 +682,6 @@ def writeMeshFunctions():
 # doesnt matter but otherwise renaming doesnt work
 p = Function(V_p)
 p = project(Constant(0.0), V_p)
-
-
-meshOut = mesh
-meshOut._parallel_compatible = {weakref.ref(mesh)}
-
-V_uOut = VectorFunctionSpace(meshOut, "CG", 1)
-V_ptOut = FunctionSpace(meshOut, "CG", 1)
 
 writeMeshFunctions()
 
