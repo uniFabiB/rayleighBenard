@@ -54,6 +54,7 @@ class utils:
 		self.deletePreviousInfoFileContent()
 		self.putInfoInInfoString("outputFolder", outputFolder)
 		self.putInfoInInfoString("ensembleSize", ensembleSize)
+		self.writeInfoFile()
 		
 	#	sys.stdout.flush()
 		comm.Barrier()
@@ -73,7 +74,7 @@ class utils:
 				self.print("creating output directory (",folder,")")
 			else:
 				raise Exception("output directory doesn't exist!")
-			self.comm.Barrier()
+		self.comm.Barrier()
 	
 	def setInfoFilePath(self, infoFilePath):
 		self.infoFilePath = infoFilePath
