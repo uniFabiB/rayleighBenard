@@ -83,12 +83,11 @@ projectPoutputToAverageFree = False 	# force the output function of p to be aver
 dataFolder = outputFolder + "data/"
 utils.checkIfFolderExists(dataFolder)
 
-
-nx = round(nXY*Lx/Ly)
-ny = nXY
-
 nxOut = round(nOut*Lx/Ly)
 nyOut = nOut
+
+nx = round(nXY/nOut)*nxOut	# like this so that the ouptut mesh is exactly a subgrid of the simulation mesh
+ny = nXY
 
 printErrors = True
 ### OPTIONS END ###
@@ -644,8 +643,6 @@ else:
 		utils.print("WARNING: output mesh ("+str(nxOut)+"x"+str(nyOut)+") is not a coarsening of the simulation mesh ("+str(nx)+"x"+str(ny)+"), "
 			+"output nodes on the wavy walls may lie outside the fine mesh and the interpolation can fail. Choose nOut such that nx/nxOut and ny/nyOut are integers.")
 	meshOut = createMesh(nxOut, nyOut, "outMesh")
-	# make points that sit on the boundary (up to rounding) findable during the cross-mesh interpolation
-	mesh.tolerance = 1e-8
 
 V_uOut = VectorFunctionSpace(meshOut, "CG", 1)
 V_ptOut = FunctionSpace(meshOut, "CG", 1)
